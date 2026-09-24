@@ -1,0 +1,26 @@
+{
+  "name": "scrivener",
+  "version": "0.1.0",
+  "description": "Discord bot that records a voice call and writes a per-speaker, timestamped transcript",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "scrivener": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js",
+    "deps": "node -e \"import('@discordjs/voice').then(v => console.log(v.generateDependencyReport()))\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@noble/ciphers": "^2.1.1",
+    "discord.js": "^14.27.0",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5"
+  }
+}
