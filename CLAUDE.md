@@ -6,8 +6,10 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 
 | Path | Role |
 |---|---|
-| `src/index.js` | discord.js client, the `/scribe` commands, auto-stop and graceful shutdown |
-| `src/session.js` | one recording: voice receive, a clip per speaker's turn, the transcription queue, final outputs |
+| `src/index.js` | discord.js client, the `/scribe` commands (start, pause, resume, stop, status, export, help), auto-stop and graceful shutdown |
+| `src/status.js` | the help text and the `/scribe status` wording, as pure functions of a session snapshot |
+| `src/export.js` | lists finished sessions and renders the combined JSONL/CSV export |
+| `src/session.js` | one recording: voice receive, a clip per speaker's turn, pause/resume, the transcription queue and its progress, final outputs |
 | `src/audio.js` | PCM helpers and `ClipBuilder` (keeps clips true to the wall clock) |
 | `src/transcriber.js` | drives the Python worker over JSON lines on stdin/stdout |
 | `src/output.js` | transcript md/srt/json and ffmpeg-built aligned speaker tracks |
@@ -19,7 +21,7 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 
 ```
 nix develop -c npm ci
-nix develop -c npm test          # 10 tests, incl. an Opus -> Whisper speech round trip
+nix develop -c npm test          # 20 tests, incl. an Opus -> Whisper speech round trip
 nix build .#scrivener            # the program; runs the unit tests in checkPhase
 nix build                        # the OCI image tarball
 ```

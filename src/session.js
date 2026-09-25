@@ -23,6 +23,7 @@ export class RecordingSession {
   startedAt = 0;
   stoppedAt = 0;
   stopping = null;
+  pausedAt = 0; // wall-clock ms the current pause began, 0 when not paused
 
   #cfg;
   #transcriber;
@@ -32,6 +33,12 @@ export class RecordingSession {
   #entries = []; // transcribed clips
   #jobs = new Set(); // in-flight transcriptions
   #failed = 0;
+  #pauses = []; // { startMs, endMs, by } on the session timeline
+  #phase = 'recording'; // after stop: transcribing -> writing -> tracks -> done
+  #clipsDone = 0; // clips whose job has settled (written, transcribed or failed)
+  #audioMs = 0; // audio sent for transcription
+  #audioDoneMs = 0; // ...of which finished
+  #drain = null; // { atMs, audioDoneMs } when stopped, to estimate time left
 
   /**
    * @param {object} o
@@ -60,6 +67,8 @@ export class RecordingSession {
       startedAt: new Date(this.startedAt).toISOString(),
       startedAtMs: this.startedAt,
       durationMs: (this.stoppedAt || Date.now()) - this.startedAt,
+      pausedMs: this.#pausedMs(),
+      pauses: this.#pauses.map((p) => ({ ...p })),
     };
   }
 
@@ -118,7 +127,7 @@ export class RecordingSession {
   }
 
   #listen(userId) {
-    if (this.stopping || this.#active.has(userId)) return;
+    if (this.stopping || this.pausedAt || this.#active.has(userId)) return;
     const member = this.guild.members.cache.get(userId);
     if (member?.user.bot) return;
     this.#name(userId); // warm the cache
@@ -168,11 +177,13 @@ export class RecordingSession {
     const file = join('clips', `${String(offsetMs).padStart(9, '0')}_${userId}.wav`);
     const clip = { speakerId: userId, offsetMs, durationMs, file };
     this.#clips.push(clip);
+    const transcribe = durationMs >= this.#cfg.minClipMs;
+    if (transcribe) this.#audioMs += durationMs;
 
     const job = (async () => {
       try {
         await writeFile(join(this.dir, file), toWav(builder.pcm()));
-        if (durationMs < this.#cfg.minClipMs) return;
+        if (!transcribe) return;
         const speaker = await this.#name(userId);
         const res = await this.#transcriber.transcribe(join(this.dir, file));
         if (!res.segments.length) return;
@@ -183,6 +194,9 @@ export class RecordingSession {
       } catch (err) {
         this.#failed++;
         console.error(`[session] clip ${file} failed: ${err.message}`);
+      } finally {
+        this.#clipsDone++;
+        if (transcribe) this.#audioDoneMs += durationMs;
       }
     })();
     this.#jobs.add(job);
@@ -194,14 +208,77 @@ export class RecordingSession {
     await writeFile(join(this.dir, 'session.json'), JSON.stringify({ ...this.meta, speakers, ...extra }, null, 2) + '\n');
   }
 
-  get stats() {
+  /** Where the session is now: recording, paused, or one of the finishing steps. */
+  get phase() {
+    if (this.stopping) return this.#phase;
+    return this.pausedAt ? 'paused' : 'recording';
+  }
+
+  /** A point-in-time view for `/scribe status`. See status.js. */
+  get snapshot() {
+    const pause = this.#pauses.at(-1);
     return {
+      channelName: this.voiceChannel.name,
+      phase: this.phase,
       durationMs: this.meta.durationMs,
+      pausedMs: this.#pausedMs(),
+      pausedBy: this.pausedAt ? pause?.by : null,
+      pausedForMs: this.pausedAt ? Date.now() - this.pausedAt : 0,
+      reason: this.reason ?? null,
       speakers: this.#names.size,
-      clips: this.#clips.length,
       lines: this.#entries.reduce((n, e) => n + e.segments.length, 0),
-      pending: this.#jobs.size,
+      clips: this.#clips.length,
+      clipsDone: this.#clipsDone,
+      audioMs: this.#audioMs,
+      audioDoneMs: this.#audioDoneMs,
+      drain: this.#drain && { ...this.#drain },
     };
+  }
+
+  #pausedMs(now = this.stoppedAt || Date.now()) {
+    const nowOffset = now - this.startedAt;
+    return this.#pauses.reduce((n, p) => n + ((p.endMs ?? nowOffset) - p.startMs), 0);
+  }
+
+  /** End every open clip at this moment and drop the audio subscriptions. */
+  #flushActive() {
+    for (const rec of [...this.#active.values()]) {
+      rec.finish();
+      rec.opus.destroy();
+      rec.decoder.destroy();
+    }
+  }
+
+  /**
+   * Stop capturing audio but stay in the call. The session timeline keeps
+   * running, so the paused stretch is silence in the tracks and a gap in the
+   * transcript, and later timestamps still line up with the wall clock.
+   * @returns {boolean} false if already paused or stopping
+   */
+  pause(by) {
+    if (this.stopping || this.pausedAt) return false;
+    this.pausedAt = Date.now();
+    this.#pauses.push({ startMs: this.pausedAt - this.startedAt, endMs: null, by });
+    this.#flushActive();
+    this.#writeMeta().catch((err) => console.error('[session] writing session.json failed:', err.message));
+    return true;
+  }
+
+  /** @returns {boolean} false if not paused or stopping */
+  resume() {
+    if (this.stopping || !this.pausedAt) return false;
+    this.#closePause(Date.now());
+    // Anyone already talking won't raise a fresh 'start' until they next go
+    // quiet, so pick them up now.
+    for (const userId of this.connection.receiver.speaking.users.keys()) this.#listen(userId);
+    this.#writeMeta().catch((err) => console.error('[session] writing session.json failed:', err.message));
+    return true;
+  }
+
+  #closePause(now) {
+    if (!this.pausedAt) return;
+    this.#pauses.at(-1).endMs = now - this.startedAt;
+    this.pausedAt = 0;
   }
 
   /** Idempotent: every caller gets the same finishing promise. */
@@ -212,16 +289,17 @@ export class RecordingSession {
 
   async #finish(reason) {
     this.stoppedAt = Date.now();
+    this.reason = reason;
+    this.#closePause(this.stoppedAt);
+    this.#phase = 'transcribing';
     // Flush every open clip, then hang up.
-    for (const rec of [...this.#active.values()]) {
-      rec.finish();
-      rec.opus.destroy();
-      rec.decoder.destroy();
-    }
+    this.#flushActive();
     this.connection?.destroy();
 
+    this.#drain = { atMs: Date.now(), audioDoneMs: this.#audioDoneMs };
     while (this.#jobs.size) await Promise.allSettled([...this.#jobs]);
 
+    this.#phase = 'writing';
     const meta = this.meta;
     const lines = buildLines(this.#entries);
     const md = toMarkdown(meta, lines);
@@ -229,6 +307,7 @@ export class RecordingSession {
     await writeFile(join(this.dir, 'transcript.srt'), toSrt(lines));
     await writeFile(join(this.dir, 'transcript.json'), toJson(meta, lines, this.#clips));
 
+    this.#phase = 'tracks';
     let tracksError = null;
     try {
       await buildTracks({
@@ -243,6 +322,7 @@ export class RecordingSession {
       console.error('[session] building tracks failed:', err);
     }
     await this.#writeMeta({ stoppedAt: new Date(this.stoppedAt).toISOString(), reason, failedClips: this.#failed, tracksError });
+    this.#phase = 'done';
 
     return { dir: this.dir, meta, lines, reason, failed: this.#failed, tracksError };
   }

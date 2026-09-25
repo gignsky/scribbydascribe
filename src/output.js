@@ -58,19 +58,31 @@ function srtClock(ms) {
 export function toMarkdown(meta, lines) {
   const started = new Date(meta.startedAt);
   const speakers = [...new Set(lines.map((l) => l.speaker))];
+  const pauses = meta.pauses ?? [];
   const head = [
     `# ${meta.guildName} / ${meta.channelName} — ${started.toISOString().slice(0, 16).replace('T', ' ')} UTC`,
     '',
     `- Started: ${started.toISOString()}`,
     `- Duration: ${clock(meta.durationMs)}`,
     `- Speakers: ${speakers.length ? speakers.join(', ') : '(none)'}`,
+    ...(pauses.length ? [`- Paused: ${pauses.length} time(s), ${clock(meta.pausedMs ?? 0)} in total`] : []),
     `- Timestamps are offsets from the start time above.`,
     '',
     '---',
     '',
   ];
-  const body = paragraphs(lines).map((p) => `**[${clock(p.startMs)}] ${p.speaker}:** ${p.text}\n`);
-  return head.join('\n') + (body.length ? body.join('\n') : '_Nothing was transcribed._\n');
+  const said = paragraphs(lines).map((p) => ({ at: p.startMs, text: `**[${clock(p.startMs)}] ${p.speaker}:** ${p.text}\n` }));
+  if (!said.length) return head.join('\n') + '_Nothing was transcribed._\n';
+  // Mark each pause where it happened, so a gap in the talk reads as intended.
+  const marks = pauses.map((p) => ({
+    at: p.startMs,
+    text:
+      `_[${clock(p.startMs)}] Recording paused` +
+      (p.by ? ` by ${p.by}` : '') +
+      (p.endMs == null ? '._\n' : ` for ${clock(p.endMs - p.startMs)}._\n`),
+  }));
+  const body = [...said, ...marks].sort((x, y) => x.at - y.at).map((b) => b.text);
+  return head.join('\n') + body.join('\n');
 }
 
 export function toSrt(lines) {

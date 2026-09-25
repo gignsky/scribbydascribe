@@ -25,6 +25,8 @@ export function loadConfig() {
     guildId: str('DISCORD_GUILD_ID', null),
     // Where session folders are written.
     dataDir: str('SCRIVENER_DATA_DIR', '/data/sessions'),
+    // Where /scribe export saves files too big to upload to Discord.
+    exportDir: str('SCRIVENER_EXPORT_DIR', '/data/exports'),
     // A speaker's clip ends after this much silence (ms).
     silenceMs: int('SCRIVENER_SILENCE_MS', 800),
     // Clips shorter than this are kept as audio but not transcribed (ms).

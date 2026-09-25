@@ -9,10 +9,32 @@ Discord sends a bot each person's audio as a separate stream, so speakers never 
 | Command | What it does |
 |---|---|
 | `/scribe start` | Joins your current voice channel and starts recording. It announces the recording in the channel where you ran the command and in the voice channel's chat. |
+| `/scribe pause` | Stops capturing audio but stays in the call. The pause is announced like the start is. Nothing said while paused is saved. |
+| `/scribe resume` | Starts capturing again, and says so in the channel. |
 | `/scribe stop` | Stops recording, finishes transcribing, and posts `transcript.md` and `transcript.srt` in the channel where recording started. |
-| `/scribe status` | Shows how long it has been recording, the speakers so far, the line count, and the transcription backlog. Only you can see the reply. |
+| `/scribe status` | While recording: how long, the speakers so far, the line count and the transcription backlog. After a stop, until the transcript is posted: which step it is on (transcribing, writing files, building tracks, posting), with a progress bar, clips done and a rough time left. Only you can see the reply. |
+| `/scribe export [format]` | Offers this server's finished sessions (the 25 most recent) in a menu. Pick any number and you get one file with every spoken line from all of them: `jsonl` (default) or `csv`. Only you see the menu and the file. |
+| `/scribe help` | Lists the commands. Only you can see the reply. |
 
 The bot also stops by itself two minutes after the last person leaves, and when the container is stopped. In every case it writes the files and posts the transcript before it exits.
+
+A pause does not stop the session clock. The paused stretch is silence in the audio tracks and a gap in the transcript, marked with a line like `_[00:12:30] Recording paused by Gig for 00:03:10._`, so every later timestamp still matches the wall clock. `session.json` and `transcript.json` list the pauses (`pauses`, `pausedMs`).
+
+### Export format
+
+Each row of an export is one spoken line, in time order across all the chosen sessions:
+
+| Field | Meaning |
+|---|---|
+| `session` | The session's folder name |
+| `guild`, `channel` | Server and voice channel names |
+| `session_started_at` | ISO time the session started |
+| `speaker`, `speaker_id` | Display name and Discord user ID |
+| `start_ms`, `end_ms` | Offsets from the session start |
+| `start_at` | ISO time the line was said |
+| `text` | What was said |
+
+JSONL has one JSON object per line. CSV has a header row and uses CRLF line endings, with RFC 4180 quoting. Discord caps a bot's upload at 10 MiB. A larger export is saved on the host in `/var/lib/scrivener/exports/` (`SCRIVENER_EXPORT_DIR` in the container) instead, and the reply names the file.
 
 ## What a session leaves behind
 
@@ -69,6 +91,7 @@ These are all environment variables. The defaults suit spacedock.
 | `SCRIVENER_MAX_CLIP_MS` | `30000` | Long speeches are split at this length so they transcribe while the call is still going. |
 | `SCRIVENER_MIN_CLIP_MS` | `400` | Clips shorter than this are kept as audio but not transcribed, because Whisper invents words on coughs and clicks. |
 | `SCRIVENER_ALONE_TIMEOUT_MS` | `120000` | How long the bot stays alone in the channel before it stops. |
+| `SCRIVENER_EXPORT_DIR` | `/data/exports` | Where an export too big to upload to Discord is saved. On spacedock that is `/var/lib/scrivener/exports`. |
 
 ## Development
 
