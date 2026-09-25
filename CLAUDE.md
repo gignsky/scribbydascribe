@@ -28,6 +28,10 @@ nix build                        # the OCI image tarball
 
 After changing `package-lock.json`, recompute `npmDepsHash` in `nix/package.nix`: set it to `lib.fakeHash`, build, and copy in the hash from the error.
 
+## Branches
+
+`master` is the main branch: `.dotfiles` pins the flake input to `github:gignsky/scribbydascribe/master`, so what lands on `master` is what spacedock gets on its next `nix flake update scrivener`. Work on a feature branch and merge into `master` when it is tested.
+
 ## Rules
 
 - `@discordjs/voice` must stay ≥ 0.19.2 and keep `@snazzah/davey`, or audio receive breaks under Discord's DAVE end-to-end encryption.

@@ -71,7 +71,7 @@ Because every track starts at the same moment as the transcript, lining up video
 
 ## Deploying on spacedock
 
-1. Push this repo to `github:gignsky/scribbydascribe`.
+1. Push to the `master` branch of `github:gignsky/scribbydascribe`. `master` is the release branch that spacedock deploys.
 2. Add the secret with `just sops`, as a key `scrivener-env` whose value is an env file:
    ```
    DISCORD_TOKEN=...
@@ -80,7 +80,7 @@ Because every track starts at the same moment as the transcript, lining up video
 3. In `.dotfiles/flake.nix`, add the input:
    ```nix
    scrivener = {
-     url = "github:gignsky/scribbydascribe";
+     url = "github:gignsky/scribbydascribe/master";
      inputs.nixpkgs.follows = "nixpkgs";
    };
    ```
