@@ -24,7 +24,7 @@ A pause does not stop the session clock. The paused stretch is silence in the au
 
 While a recording runs, every message posted in any text channel the bot can see is kept, including threads, the voice channel's own chat and other bots' messages (dice rollers, say). Each message gets its offset from the session start, so it lines up with the speech. In `transcript.md` it reads `💬 **[00:14:02] Ferren in #dice:** rolled 17`. Attachments are kept as links. The bot's own messages are skipped, and so is anything posted while the recording is paused. Edits and deletions after a message is posted are not tracked.
 
-This needs Discord's privileged **Message Content** intent (see the setup steps below). If it isn't switched on, the bot still records voice and logs a line saying chat is not being recorded. Set `SCRIVENER_RECORD_CHAT=false` to turn chat recording off.
+This needs Discord's privileged **Message Content** intent (see the setup steps below). The bot checks on startup whether it has been granted it, and if not simply doesn't ask for it: voice is still recorded, and a line in the log says chat is not. Set `SCRIVENER_RECORD_CHAT=false` to turn chat recording off and stop the check.
 
 ### Export format
 

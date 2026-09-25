@@ -17,14 +17,13 @@ import {
   ChannelType,
   Client,
   Events,
-  GatewayCloseCodes,
-  GatewayIntentBits,
   InteractionContextType,
   MessageFlags,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { loadConfig } from './config.js';
+import { intentsFor, isDisallowedIntents, probeChatIntent } from './intents.js';
 import { RecordingSession } from './session.js';
 import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
@@ -38,20 +37,44 @@ const transcriber = new Transcriber(cfg);
 transcriber.start();
 
 // Text chat is recorded alongside speech when the privileged Message Content
-// intent is switched on for the bot. If Discord refuses it, carry on without.
+// intent is switched on for the bot. If it is not, carry on without: voice is
+// the point, chat is the bonus.
 let recordChat = cfg.recordChat;
 
+const HOW_TO_ENABLE_CHAT =
+  'Turn on "Message Content Intent" under Bot at https://discord.com/developers/applications and restart, ' +
+  'or set SCRIVENER_RECORD_CHAT=false to stop asking.';
+
+// Asking Discord for a privileged intent it has not granted is fatal, not
+// merely refused: the gateway closes with 4014 and the error surfaces as an
+// uncaught exception from inside the websocket stack, where neither the
+// try/catch around login() below nor the unhandledRejection handler can
+// reach it. So settle the question over REST first, while a plain answer is
+// still on offer. A null verdict means the probe could not tell, and the
+// gateway decides after all -- see withoutChat.
+if (recordChat && (await probeChatIntent(cfg.token)) === false) {
+  recordChat = false;
+  console.error(`[bot] Message Content is not enabled for this bot, so text chat will NOT be recorded. ${HOW_TO_ENABLE_CHAT}`);
+}
+
 function makeClient() {
-  const intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates];
-  if (recordChat) intents.push(GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent);
-  const c = new Client({ intents });
+  const c = new Client({ intents: intentsFor(recordChat) });
   c.once(Events.ClientReady, onReady);
   c.on(Events.InteractionCreate, onInteraction);
   c.on(Events.VoiceStateUpdate, onVoiceStateUpdate);
   c.on(Events.MessageCreate, onMessage);
   c.on(Events.ShardDisconnect, (ev) => {
-    if (ev.code === GatewayCloseCodes.DisallowedIntents) withoutChat();
+    if (isDisallowedIntents(ev)) withoutChat();
   });
+  // A discord.js client is a Node EventEmitter, which throws whatever it is
+  // handed when nothing is listening for "error". Listening keeps a bad
+  // moment on the gateway from becoming a dead process.
+  for (const event of [Events.Error, Events.ShardError]) {
+    c.on(event, (err) => {
+      if (isDisallowedIntents(err)) withoutChat();
+      else console.error('[bot] gateway error:', err);
+    });
+  }
   return c;
 }
 
@@ -59,21 +82,25 @@ let fallback = null;
 function withoutChat() {
   if (!recordChat) return fallback;
   recordChat = false;
-  console.error(
-    '[bot] Discord refused the Message Content intent, so text chat will NOT be recorded. ' +
-      'Turn on "Message Content Intent" under Bot at https://discord.com/developers/applications and restart, ' +
-      'or set SCRIVENER_RECORD_CHAT=false to stop asking.',
-  );
-  fallback = (async () => {
-    const old = client;
-    client = makeClient();
-    await old.destroy();
-    await client.login(cfg.token);
-  })();
+  console.error(`[bot] Discord refused the Message Content intent, so text chat will NOT be recorded. ${HOW_TO_ENABLE_CHAT}`);
+  fallback = reconnect();
   return fallback;
 }
 
-const isDisallowedIntents = (err) => err?.code === 'DisallowedIntents' || /disallowed intents/i.test(err?.message ?? '');
+// Reconnect asking for voice only. Losing this leaves the bot logged out and
+// silent, which looks like it is working, so make it a visible death that
+// the service manager will restart instead.
+async function reconnect() {
+  const old = client;
+  client = makeClient();
+  try {
+    await old.destroy();
+    await client.login(cfg.token);
+  } catch (err) {
+    console.error('[bot] could not reconnect without the chat intent:', err);
+    process.exit(1);
+  }
+}
 
 /** guildId -> RecordingSession (one recording per server at a time) */
 const sessions = new Map();
@@ -331,6 +358,20 @@ function onVoiceStateUpdate(oldState, newState) {
 // A failed reply or a lost interaction must never take down a recording.
 process.on('unhandledRejection', (err) => console.error('[bot] unhandled:', err));
 
+// The last net under the intent fallback. A refused intent is thrown out of a
+// websocket close handler, so it arrives here rather than at any catch we can
+// write; recovering is a reconnect, not a restart. Everything else keeps
+// Node's usual fate -- report it and exit, so the service manager starts a
+// clean process rather than one left in an unknown state.
+process.on('uncaughtException', (err) => {
+  if (recordChat && isDisallowedIntents(err)) {
+    withoutChat();
+    return;
+  }
+  console.error('[bot] fatal:', err);
+  process.exit(1);
+});
+
 // systemd / podman stop: finish every recording properly before exiting.
 let shuttingDown = false;
 async function shutdown(signal) {
@@ -352,6 +393,16 @@ let client = makeClient();
 try {
   await client.login(cfg.token);
 } catch (err) {
-  if (!recordChat || !isDisallowedIntents(err)) throw err;
-  await withoutChat();
+  // A refusal may already have arrived by another route and started a
+  // voice-only reconnect, in which case this failure is stale news and the
+  // reconnect is the one whose outcome matters.
+  if (fallback) await fallback;
+  else if (isDisallowedIntents(err)) await withoutChat();
+  else {
+    // Rethrowing here only reaches the unhandledRejection handler above,
+    // which would log the failure and leave a live process that is not
+    // logged in to anything. Die instead, and let the service manager retry.
+    console.error('[bot] could not log in:', err);
+    process.exit(1);
+  }
 }
