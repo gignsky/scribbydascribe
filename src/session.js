@@ -187,7 +187,7 @@ export class RecordingSession {
         await writeFile(join(this.dir, file), toWav(builder.pcm()));
         if (!transcribe) return;
         const speaker = await this.#name(userId);
-        const res = await this.#transcriber.transcribe(join(this.dir, file));
+        const res = await this.#transcriber.transcribe(join(this.dir, file), durationMs);
         if (!res.segments.length) return;
         const entry = { offsetMs, speakerId: userId, speaker, segments: res.segments, file };
         this.#entries.push(entry);
@@ -235,6 +235,8 @@ export class RecordingSession {
       audioMs: this.#audioMs,
       audioDoneMs: this.#audioDoneMs,
       drain: this.#drain && { ...this.#drain },
+      rate: this.#transcriber.rate ?? null,
+      modelLoading: this.#transcriber.ready === false,
     };
   }
 

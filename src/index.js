@@ -28,7 +28,7 @@ import { intentsFor, isDisallowedIntents, probeChatIntent } from './intents.js';
 import { RecordingSession } from './session.js';
 import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
-import { HELP, describe } from './status.js';
+import { HELP, describe, describeLast, finishedLine } from './status.js';
 import { roll } from './dice.js';
 import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport } from './export.js';
 
@@ -110,6 +110,11 @@ const sessions = new Map();
 const finishing = new Map();
 /** guildId -> timeout handle while the bot sits alone */
 const aloneTimers = new Map();
+/** guildId -> the last finished recording, for `/scribe status` afterwards */
+const lastFinished = new Map();
+
+// How often a stopped recording's progress message is refreshed.
+const PROGRESS_EVERY_MS = 10_000;
 
 const command = new SlashCommandBuilder()
   .setName('scribe')
@@ -235,15 +240,47 @@ function onMessage(msg) {
  * Stop a session and post its transcript. Idempotent: a stop, a dropped
  * connection and the alone timer can all race here, and it posts once.
  */
-function finishAndPost(session, reason) {
+function finishAndPost(session, reason, progress) {
   if (!finishing.has(session)) {
-    const job = postTranscript(session, reason).finally(() => finishing.delete(session));
+    const job = postTranscript(session, reason, progress).finally(() => finishing.delete(session));
     finishing.set(session, job);
   }
   return finishing.get(session);
 }
 
-async function postTranscript(session, reason) {
+/**
+ * Keep a message showing a stopped session's progress until it is done, so
+ * nobody has to keep asking `/scribe status`. Edits only when the words change.
+ * @param {(content: string) => Promise<unknown>} edit
+ */
+function showProgress(session, edit) {
+  let shown = '';
+  let busy = false;
+  const tick = async () => {
+    if (busy) return;
+    const content = describe(session.snapshot);
+    if (content === shown) return;
+    busy = true;
+    try {
+      await edit(content);
+      shown = content;
+    } catch (err) {
+      console.warn('[bot] could not update progress:', err.message);
+    } finally {
+      busy = false;
+    }
+  };
+  tick();
+  const timer = setInterval(tick, PROGRESS_EVERY_MS);
+  return () => clearInterval(timer);
+}
+
+/**
+ * @param {(content: string) => Promise<unknown>} [progress] edits a message to
+ *   show progress; without one, a progress message is posted in the channel
+ *   the recording was started from.
+ */
+async function postTranscript(session, reason, progress) {
   // Only clear the slot if it is still ours; a new recording may have started.
   if (sessions.get(session.guild.id) === session) {
     sessions.delete(session.guild.id);
@@ -251,7 +288,21 @@ async function postTranscript(session, reason) {
     aloneTimers.delete(session.guild.id);
   }
 
-  const res = await session.stop(reason);
+  const stopping = session.stop(reason);
+  if (!progress) {
+    const msg = await session.textChannel.send(describe(session.snapshot)).catch((err) => {
+      console.warn('[bot] could not post progress:', err.message);
+      return null;
+    });
+    if (msg) progress = (content) => msg.edit(content);
+  }
+  const stopProgress = progress ? showProgress(session, progress) : () => {};
+  let res;
+  try {
+    res = await stopping;
+  } finally {
+    stopProgress();
+  }
   const files = [new AttachmentBuilder(`${res.dir}/transcript.md`), new AttachmentBuilder(`${res.dir}/transcript.srt`)];
   const speakers = new Set(res.lines.map((l) => l.speaker)).size;
   const notes = [];
@@ -264,11 +315,16 @@ async function postTranscript(session, reason) {
     `${clock(res.meta.durationMs)}${paused}, ${speakers} speaker(s), ${res.lines.length} line(s)` +
     (res.chat.length ? `, ${res.chat.length} chat message(s).` : '.') +
     (notes.length ? `\n⚠️ ${notes.join('; ')}.` : '');
+  let posted = true;
   try {
     await session.textChannel.send({ content: text, files });
   } catch (err) {
+    posted = false;
     console.error('[bot] could not post transcript:', err.message);
   }
+  const done = { channelName: session.voiceChannel.name, lines: res.lines.length, failed: res.failed, posted };
+  await progress?.(finishedLine(done)).catch(() => {});
+  lastFinished.set(session.guild.id, { ...done, finishedAt: Date.now(), postedIn: session.textChannel.toString?.() });
   console.log(`[bot] session saved to ${res.dir}`);
   return res;
 }
@@ -295,7 +351,7 @@ async function onInteraction(i) {
     // The live recording, if any, then any stopped ones still being finished.
     const now = Date.now();
     const here = [current, ...[...finishing.keys()].filter((s) => s.guild.id === i.guildId)].filter(Boolean);
-    const content = here.length ? here.map((s) => describe(s.snapshot, now)).join('\n\n') : 'Not recording.';
+    const content = here.length ? here.map((s) => describe(s.snapshot, now)).join('\n\n') : describeLast(lastFinished.get(i.guildId));
     return i.reply({ content, flags: MessageFlags.Ephemeral });
   }
 
@@ -323,8 +379,12 @@ async function onInteraction(i) {
 
   if (sub === 'stop') {
     if (!current) return i.reply({ content: 'Not recording.', flags: MessageFlags.Ephemeral });
-    await i.reply(`Stopping. Finishing the transcript… \`/scribe status\` shows how far along it is.`);
-    await finishAndPost(current, `stopped by ${i.user.displayName}`);
+    const reply = await i.reply({ content: 'Stopping…', withResponse: true });
+    // The interaction token lapses after 15 minutes, and a long backlog can
+    // outlast it; the message itself can still be edited after that.
+    const message = reply.resource?.message;
+    const progress = (content) => i.editReply(content).catch((err) => (message ? message.edit(content) : Promise.reject(err)));
+    await finishAndPost(current, `stopped by ${i.user.displayName}`, progress);
     return;
   }
 
