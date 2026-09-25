@@ -89,7 +89,7 @@ export function toMarkdown(meta, lines, chat = []) {
     at: p.startMs,
     text:
       `_[${clock(p.startMs)}] Recording paused` +
-      (p.by ? ` by ${p.by}` : '') +
+      (p.restart ? ' while the bot restarted' : p.by ? ` by ${p.by}` : '') +
       (p.endMs == null ? '._\n' : ` for ${clock(p.endMs - p.startMs)}._\n`),
   }));
   const body = [...said, ...marks].sort((x, y) => x.at - y.at).map((b) => b.text);

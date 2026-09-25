@@ -126,8 +126,23 @@ export class Transcriber extends EventEmitter {
     return this.throughput.rate;
   }
 
+  /** Let the worker finish what it has been sent, then exit. */
   stop() {
     this.#closing = true;
     this.#proc?.stdin.end();
+  }
+
+  /**
+   * Stop the worker now, abandoning its queue: every pending clip is
+   * rejected. For a restart, where the queue is picked up again afterwards.
+   * @returns {Promise<void>} once the worker has exited
+   */
+  kill() {
+    this.#closing = true;
+    const proc = this.#proc;
+    if (!proc || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
+    const exited = new Promise((resolve) => proc.once('exit', resolve));
+    proc.kill('SIGTERM');
+    return exited;
   }
 }

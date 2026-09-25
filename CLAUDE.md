@@ -6,12 +6,12 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 
 | Path | Role |
 |---|---|
-| `src/index.js` | discord.js client, the `/scribe` commands (start, pause, resume, stop, status, export, help) and `/roll`, auto-stop and graceful shutdown |
+| `src/index.js` | discord.js client, the `/scribe` commands (start, pause, resume, stop, status, export, help) and `/roll`, auto-stop, and shutdown: recordings are suspended on a stop and resumed on the next start |
 | `src/intents.js` | which gateway intents to ask for, and the Message Content grant check that keeps a refusal from being fatal |
 | `src/dice.js` | dice notation for `/roll`: parse, roll, and show the working |
 | `src/status.js` | the help text and the `/scribe status` wording, as pure functions of a session snapshot |
 | `src/export.js` | lists finished sessions and renders the combined JSONL/CSV export |
-| `src/session.js` | one recording: voice receive, a clip per speaker's turn, pause/resume, text chat, the transcription queue and its progress, final outputs |
+| `src/session.js` | one recording: voice receive, a clip per speaker's turn, pause/resume, text chat, the transcription queue and its progress, final outputs, and suspend/restore across a restart (`resume.json`) |
 | `src/audio.js` | PCM helpers and `ClipBuilder` (keeps clips true to the wall clock) |
 | `src/transcriber.js` | drives the Python worker over JSON lines on stdin/stdout, and measures its speed for the status time estimates |
 | `src/output.js` | transcript md/srt/json and ffmpeg-built aligned speaker tracks |
@@ -23,7 +23,7 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 
 ```
 nix develop -c npm ci
-nix develop -c npm test          # 41 tests, incl. an Opus -> Whisper speech round trip
+nix develop -c npm test          # 45 tests, incl. an Opus -> Whisper speech round trip
 nix build .#scrivener            # the program; runs the unit tests in checkPhase
 nix build                        # the OCI image tarball
 ```
@@ -39,5 +39,6 @@ After changing `package-lock.json`, recompute `npmDepsHash` in `nix/package.nix`
 - `@discordjs/voice` must stay ≥ 0.19.2 and keep `@snazzah/davey`, or audio receive breaks under Discord's DAVE end-to-end encryption.
 - `opusscript` is pinned to `^0.0.8` to satisfy prism-media's peer range. Keep native `@discordjs/opus` out, because it complicates the Nix build.
 - Recording chat needs the privileged Message Content intent. Asking for one Discord has not granted is fatal, not merely refused: the gateway closes with 4014 and the error escapes as an uncaught exception that no catch around `login()` can see. `src/intents.js` therefore checks the application's flags over REST before connecting, and keeps a reactive fallback plus a `process.on('uncaughtException')` net for when the probe cannot tell. Keep all three; voice-only is always better than offline.
+- A container stop is usually an update, so it suspends recordings rather than ending them. Anything a session needs to carry on must be in `resume.json` (`RecordingSession#state`) or in its append-only `events.jsonl`/`chat.jsonl`. A clip whose transcription is cut off by the worker being killed is left for the requeue, never counted as failed.
 - Never commit tokens. The bot token only ever lives in sops (`scrivener-env` in nix-secrets).
 - Video capture is out of scope for the bot: Discord's bot API can't receive video, and selfbots break Discord's terms.
