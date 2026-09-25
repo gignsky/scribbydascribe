@@ -25,10 +25,10 @@ import {
 } from 'discord.js';
 import { loadConfig } from './config.js';
 import { intentsFor, isDisallowedIntents, probeChatIntent } from './intents.js';
-import { RecordingSession } from './session.js';
+import { RecordingSession, Suspended, findSuspended } from './session.js';
 import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
-import { HELP, describe } from './status.js';
+import { HELP, describe, describeLast, finishedLine } from './status.js';
 import { roll } from './dice.js';
 import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport } from './export.js';
 
@@ -110,6 +110,11 @@ const sessions = new Map();
 const finishing = new Map();
 /** guildId -> timeout handle while the bot sits alone */
 const aloneTimers = new Map();
+/** guildId -> the last finished recording, for `/scribe status` afterwards */
+const lastFinished = new Map();
+
+// How often a stopped recording's progress message is refreshed.
+const PROGRESS_EVERY_MS = 10_000;
 
 const command = new SlashCommandBuilder()
   .setName('scribe')
@@ -223,6 +228,76 @@ async function onReady(c) {
     await c.application.commands.set(commands);
     console.log('[bot] commands registered globally');
   }
+  // Once only: a voice-only reconnect fires ready again.
+  resuming ??= resumeSuspended(c).catch((err) => console.error('[bot] resuming recordings failed:', err));
+}
+
+let resuming = null;
+
+/** Pick up every recording the last shutdown left suspended. */
+async function resumeSuspended(c) {
+  for (const { file, state } of await findSuspended(cfg.dataDir)) {
+    try {
+      await resumeOne(c, state);
+    } catch (err) {
+      console.error(`[bot] could not resume ${file}:`, err);
+    }
+  }
+}
+
+async function resumeOne(c, state) {
+  const guild = await c.guilds.fetch(state.guildId);
+  const voiceChannel = await guild.channels.fetch(state.voiceChannelId);
+  const textChannel =
+    (state.textChannelId && (await guild.channels.fetch(state.textChannelId).catch(() => null))) ||
+    (voiceChannel.isTextBased() ? voiceChannel : null);
+  const startedBy = await c.users.fetch(state.startedById).catch(() => ({ id: state.startedById, tag: state.startedByTag }));
+  const session = await RecordingSession.restore({
+    state,
+    cfg,
+    transcriber,
+    voiceChannel,
+    textChannel,
+    startedBy,
+    onLost: (reason) => finishAndPost(session, reason),
+  });
+  session.requeue();
+  const name = voiceChannel.name;
+  const down = clock(Date.now() - state.suspendedAt);
+
+  // Stopped before the restart: only the transcript was left to finish.
+  if (state.stopping) {
+    console.log(`[bot] finishing the transcript of ${name} after a restart`);
+    finishAndPost(session, state.reason ?? 'stopped');
+    return;
+  }
+
+  const late = Date.now() - state.suspendedAt > cfg.resumeWindowMs;
+  const humans = voiceChannel.members.filter((m) => !m.user.bot).size;
+  let why = late ? `the bot was down for ${down}, too long to pick up again` : humans === 0 ? 'everyone left while the bot was restarting' : null;
+  if (!why) {
+    try {
+      await session.rejoin();
+    } catch (err) {
+      why = `could not rejoin after a restart: ${err.message}`;
+    }
+  }
+  if (why) {
+    console.log(`[bot] not resuming ${name}: ${why}`);
+    session.endAtSuspend();
+    finishAndPost(session, why);
+    return;
+  }
+
+  sessions.set(guild.id, session);
+  console.log(`[bot] resumed recording ${name} after ${down} down`);
+  const notice = session.pausedAt
+    ? `⏸️ **scrivener is back** after a restart (${down}). The recording of ${name} is still paused; \`/scribe resume\` continues.`
+    : `🔴 **Recording of ${name} resumed** after a restart. The ${down} the bot was down is marked as a gap in the transcript. ` +
+      (recordChat ? 'Everything said in the channel and posted in the server is being saved again.' : 'Everything said in the channel is being saved again.');
+  for (const ch of new Set([textChannel, voiceChannel.isTextBased() ? voiceChannel : null])) {
+    await ch?.send(notice).catch(() => {});
+  }
 }
 
 /** Text messages anywhere in a server being recorded go into its session. */
@@ -235,15 +310,47 @@ function onMessage(msg) {
  * Stop a session and post its transcript. Idempotent: a stop, a dropped
  * connection and the alone timer can all race here, and it posts once.
  */
-function finishAndPost(session, reason) {
+function finishAndPost(session, reason, progress) {
   if (!finishing.has(session)) {
-    const job = postTranscript(session, reason).finally(() => finishing.delete(session));
+    const job = postTranscript(session, reason, progress).finally(() => finishing.delete(session));
     finishing.set(session, job);
   }
   return finishing.get(session);
 }
 
-async function postTranscript(session, reason) {
+/**
+ * Keep a message showing a stopped session's progress until it is done, so
+ * nobody has to keep asking `/scribe status`. Edits only when the words change.
+ * @param {(content: string) => Promise<unknown>} edit
+ */
+function showProgress(session, edit) {
+  let shown = '';
+  let busy = false;
+  const tick = async () => {
+    if (busy) return;
+    const content = describe(session.snapshot);
+    if (content === shown) return;
+    busy = true;
+    try {
+      await edit(content);
+      shown = content;
+    } catch (err) {
+      console.warn('[bot] could not update progress:', err.message);
+    } finally {
+      busy = false;
+    }
+  };
+  tick();
+  const timer = setInterval(tick, PROGRESS_EVERY_MS);
+  return () => clearInterval(timer);
+}
+
+/**
+ * @param {(content: string) => Promise<unknown>} [progress] edits a message to
+ *   show progress; without one, a progress message is posted in the channel
+ *   the recording was started from.
+ */
+async function postTranscript(session, reason, progress) {
   // Only clear the slot if it is still ours; a new recording may have started.
   if (sessions.get(session.guild.id) === session) {
     sessions.delete(session.guild.id);
@@ -251,7 +358,26 @@ async function postTranscript(session, reason) {
     aloneTimers.delete(session.guild.id);
   }
 
-  const res = await session.stop(reason);
+  const stopping = session.stop(reason);
+  if (!progress) {
+    const msg = await session.textChannel?.send(describe(session.snapshot)).catch((err) => {
+      console.warn('[bot] could not post progress:', err.message);
+      return null;
+    });
+    if (msg) progress = (content) => msg.edit(content);
+  }
+  const stopProgress = progress ? showProgress(session, progress) : () => {};
+  let res;
+  try {
+    res = await stopping;
+  } catch (err) {
+    if (!(err instanceof Suspended)) throw err;
+    stopProgress();
+    await progress?.(`⏸️ Transcript of **${session.voiceChannel.name}** on hold: the bot is restarting. It picks up where it left off once the bot is back.`).catch(() => {});
+    return null;
+  } finally {
+    stopProgress();
+  }
   const files = [new AttachmentBuilder(`${res.dir}/transcript.md`), new AttachmentBuilder(`${res.dir}/transcript.srt`)];
   const speakers = new Set(res.lines.map((l) => l.speaker)).size;
   const notes = [];
@@ -264,11 +390,16 @@ async function postTranscript(session, reason) {
     `${clock(res.meta.durationMs)}${paused}, ${speakers} speaker(s), ${res.lines.length} line(s)` +
     (res.chat.length ? `, ${res.chat.length} chat message(s).` : '.') +
     (notes.length ? `\n⚠️ ${notes.join('; ')}.` : '');
+  let posted = true;
   try {
     await session.textChannel.send({ content: text, files });
   } catch (err) {
+    posted = false;
     console.error('[bot] could not post transcript:', err.message);
   }
+  const done = { channelName: session.voiceChannel.name, lines: res.lines.length, failed: res.failed, posted };
+  await progress?.(finishedLine(done)).catch(() => {});
+  lastFinished.set(session.guild.id, { ...done, finishedAt: Date.now(), postedIn: session.textChannel.toString?.() });
   console.log(`[bot] session saved to ${res.dir}`);
   return res;
 }
@@ -295,8 +426,13 @@ async function onInteraction(i) {
     // The live recording, if any, then any stopped ones still being finished.
     const now = Date.now();
     const here = [current, ...[...finishing.keys()].filter((s) => s.guild.id === i.guildId)].filter(Boolean);
-    const content = here.length ? here.map((s) => describe(s.snapshot, now)).join('\n\n') : 'Not recording.';
+    const content = here.length ? here.map((s) => describe(s.snapshot, now)).join('\n\n') : describeLast(lastFinished.get(i.guildId));
     return i.reply({ content, flags: MessageFlags.Ephemeral });
+  }
+
+  // Recordings are being suspended or finished; changing them now would race that.
+  if (shuttingDown && ['start', 'stop', 'pause', 'resume'].includes(sub)) {
+    return i.reply({ content: 'The bot is restarting. Try again in a minute.', flags: MessageFlags.Ephemeral });
   }
 
   if (sub === 'pause' || sub === 'resume') {
@@ -323,8 +459,12 @@ async function onInteraction(i) {
 
   if (sub === 'stop') {
     if (!current) return i.reply({ content: 'Not recording.', flags: MessageFlags.Ephemeral });
-    await i.reply(`Stopping. Finishing the transcript… \`/scribe status\` shows how far along it is.`);
-    await finishAndPost(current, `stopped by ${i.user.displayName}`);
+    const reply = await i.reply({ content: 'Stopping…', withResponse: true });
+    // The interaction token lapses after 15 minutes, and a long backlog can
+    // outlast it; the message itself can still be edited after that.
+    const message = reply.resource?.message;
+    const progress = (content) => i.editReply(content).catch((err) => (message ? message.edit(content) : Promise.reject(err)));
+    await finishAndPost(current, `stopped by ${i.user.displayName}`, progress);
     return;
   }
 
@@ -410,15 +550,42 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-// systemd / podman stop: finish every recording properly before exiting.
+// systemd / podman stop. By default recordings are suspended, to carry on
+// when the bot is back (an update is a restart); otherwise, or for a session
+// already writing its files, they are finished properly before exiting.
 let shuttingDown = false;
 async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`[bot] ${signal}: finishing ${sessions.size + finishing.size} recording(s)`);
-  // Stopped sessions still transcribing must finish too, or stopping the
-  // worker below would cut their transcripts short.
-  for (const s of sessions.values()) finishAndPost(s, 'bot shutting down');
+  for (const t of aloneTimers.values()) clearTimeout(t);
+  aloneTimers.clear();
+  const all = [...sessions.values(), ...finishing.keys()];
+
+  if (cfg.resumeAfterRestart && all.length) {
+    console.log(`[bot] ${signal}: suspending ${all.length} recording(s) to resume after the restart`);
+    const suspended = (await Promise.all(all.map(async (s) => ((await s.suspend()) ? s : null)))).filter(Boolean);
+    // Abandon the worker's queue; the clips are requeued after the restart.
+    if (suspended.length) await transcriber.kill();
+    await Promise.allSettled(suspended.map((s) => s.settled()));
+    await Promise.allSettled(
+      suspended.map(async (s) => {
+        await s.saveState();
+        console.log(`[bot] suspended ${s.dir}`);
+        if (s.stopping) return; // its progress message says so
+        const notice =
+          `⏸️ **scrivener is restarting.** The recording of ${s.voiceChannel.name} is on hold and carries on when the bot is back, usually within a minute or two. ` +
+          `If it is not back within ${Math.round(cfg.resumeWindowMs / 60_000)} minutes, the recording is finished as it stands now instead.`;
+        await s.textChannel?.send(notice).catch(() => {});
+      }),
+    );
+  } else {
+    console.log(`[bot] ${signal}: finishing ${all.length} recording(s)`);
+    // Stopped sessions still transcribing must finish too, or stopping the
+    // worker below would cut their transcripts short.
+    for (const s of sessions.values()) finishAndPost(s, 'bot shutting down');
+  }
+  // Suspended sessions have given up their slots in finishing by now; any
+  // left were past transcribing and only need a moment.
   await Promise.allSettled([...finishing.values()]);
   transcriber.stop();
   await client.destroy();

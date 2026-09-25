@@ -9,8 +9,8 @@ export const HELP = [
   '`/scribe start`: join your voice channel and start recording, along with messages posted in this server\'s text channels. Everyone in the call is told.',
   '`/scribe pause`: stop capturing but stay in the call. Nothing said or posted while paused is saved.',
   '`/scribe resume`: start capturing again after a pause.',
-  '`/scribe stop`: end the recording. The transcript is posted here once it is finished.',
-  '`/scribe status`: what is being recorded, or how far along a stopped recording\'s transcript is.',
+  '`/scribe stop`: end the recording. A progress message keeps count of the transcription backlog until the transcript is posted here.',
+  '`/scribe status`: what is being recorded and whether transcription is keeping up, or how far along a stopped recording\'s transcript is, with a rough time left.',
   '`/scribe export`: pick past sessions and get their transcripts combined into one JSONL or CSV file.',
   '`/scribe help`: this message.',
   '`/roll [dice] [for]`: roll dice, like `d20`, `2d6+3`, `4d6kh3` (keep the highest 3) or `2d20kh1+5` (advantage). A roll made during a recording goes into its transcript.',
@@ -27,23 +27,42 @@ export function bar(done, total, width = 10) {
 }
 
 /**
- * Time left to transcribe the backlog, from the rate audio has been getting
- * through since the stop. Null until there is enough to go on.
+ * Time left to transcribe the backlog. After a stop, from the rate audio has
+ * been getting through since; before that, or until the stop has given enough
+ * to go on, from the worker's measured speed (`rate`, audio ms per ms). Null
+ * when there is nothing to go on yet.
  */
 export function etaMs(snap, now) {
   const left = snap.audioMs - snap.audioDoneMs;
   if (left <= 0) return 0;
-  if (!snap.drain) return null;
-  const elapsed = now - snap.drain.atMs;
-  const done = snap.audioDoneMs - snap.drain.audioDoneMs;
-  if (elapsed < 5_000 || done <= 0) return null;
-  return Math.round((left / done) * elapsed);
+  if (snap.modelLoading) return null;
+  if (snap.drain) {
+    const elapsed = now - snap.drain.atMs;
+    const done = snap.audioDoneMs - snap.drain.audioDoneMs;
+    if (elapsed >= 5_000 && done > 0) return Math.round((left / done) * elapsed);
+  }
+  return snap.rate > 0 ? Math.round(left / snap.rate) : null;
 }
 
 function roughly(ms) {
   if (ms < 60_000) return 'under a minute';
   const min = Math.round(ms / 60_000);
   return min === 1 ? 'about 1 minute' : `about ${min} minutes`;
+}
+
+const LOADING = '\n⌛ The speech model is still loading; transcription starts once it is ready.';
+
+/** While recording: how far transcription lags behind the call, if at all. */
+function backlog(s, now) {
+  const clips = s.clips - s.clipsDone;
+  const left = s.audioMs - s.audioDoneMs;
+  if (clips <= 0) return 'transcription is keeping up.';
+  const eta = etaMs(s, now);
+  return (
+    `${clips} clip(s) waiting to transcribe` +
+    (left > 0 ? ` (${clock(left)} of audio${eta ? `, ${roughly(eta)} to catch up` : ''})` : '') +
+    '.'
+  );
 }
 
 function soFar(s) {
@@ -53,13 +72,14 @@ function soFar(s) {
 /** One session's status line(s). */
 export function describe(s, now = Date.now()) {
   const paused = s.pausedMs > 0 ? ` (${clock(s.pausedMs)} of it paused)` : '';
-  const backlog = s.clips - s.clipsDone;
+  const loading = s.modelLoading ? LOADING : '';
 
   switch (s.phase) {
     case 'recording':
       return (
         `🔴 Recording **${s.channelName}** for ${clock(s.durationMs)}${paused}: ` +
-        `${soFar(s)}, ${backlog} clip(s) waiting to transcribe.`
+        `${soFar(s)}; ${backlog(s, now)}` +
+        loading
       );
     case 'paused':
       return (
@@ -75,7 +95,8 @@ export function describe(s, now = Date.now()) {
         `Transcribing: ${bar(s.audioDoneMs, s.audioMs)}, ` +
         `${s.clipsDone} of ${s.clips} clip(s) done, ${clock(s.audioMs - s.audioDoneMs)} of audio left` +
         (eta === null ? '.' : `, ${roughly(eta)} to go.`) +
-        `\n${s.lines} line(s) transcribed so far.`
+        `\n${s.lines} line(s) transcribed so far.` +
+        loading
       );
     }
     case 'writing':
@@ -87,4 +108,31 @@ export function describe(s, now = Date.now()) {
     default:
       return `**${s.channelName}**: ${s.phase}`;
   }
+}
+
+/**
+ * The line a stopped recording's progress message ends on once its
+ * transcript is out.
+ * @param {{ channelName: string, lines: number, failed?: number, posted: boolean }} r
+ */
+export function finishedLine(r) {
+  return r.posted
+    ? `✅ Transcript of **${r.channelName}** finished and posted: ${r.lines} line(s)` +
+        (r.failed ? `, ${r.failed} clip(s) failed` : '') +
+        '.'
+    : `⚠️ Transcript of **${r.channelName}** finished (${r.lines} line(s)), but it could not be posted. It is saved on the host.`;
+}
+
+/**
+ * `/scribe status` when nothing is recording or finishing: when the last
+ * recording ended, so "Not recording" is not mistaken for "lost".
+ * @param {{ channelName: string, finishedAt: number, lines: number, posted: boolean, postedIn?: string } | undefined} last
+ */
+export function describeLast(last) {
+  if (!last) return 'Not recording.';
+  const when = `<t:${Math.floor(last.finishedAt / 1000)}:R>`;
+  return (
+    `Not recording. The last recording, of **${last.channelName}**, finished ${when} with ${last.lines} line(s)` +
+    (last.posted ? `; its transcript was posted${last.postedIn ? ` in ${last.postedIn}` : ''}.` : ', but its transcript could not be posted. It is saved on the host.')
+  );
 }

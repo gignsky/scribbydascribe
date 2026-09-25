@@ -11,13 +11,26 @@ Discord sends a bot each person's audio as a separate stream, so speakers never 
 | `/scribe start` | Joins your current voice channel and starts recording. It announces the recording in the channel where you ran the command and in the voice channel's chat. |
 | `/scribe pause` | Stops capturing audio but stays in the call. The pause is announced like the start is. Nothing said while paused is saved. |
 | `/scribe resume` | Starts capturing again, and says so in the channel. |
-| `/scribe stop` | Stops recording, finishes transcribing, and posts `transcript.md` and `transcript.srt` in the channel where recording started. |
-| `/scribe status` | While recording: how long, the speakers so far, the line count and the transcription backlog. After a stop, until the transcript is posted: which step it is on (transcribing, writing files, building tracks, posting), with a progress bar, clips done and a rough time left. Only you can see the reply. |
+| `/scribe stop` | Stops recording, finishes transcribing, and posts `transcript.md` and `transcript.srt` in the channel where recording started. Until then, its reply is a progress message that updates itself every 10 seconds: the step it is on, a progress bar and a rough time left. When the transcript is out it reads ✅. A recording that stops by itself (everyone left, the connection dropped, the container stopped) posts the same progress message in the channel where it was started. |
+| `/scribe status` | While recording: how long, the speakers so far, the line count, and whether transcription is keeping up. If it is behind, it shows how much audio is waiting and roughly how long catching up will take. After a stop, until the transcript is posted: which step it is on (transcribing, writing files, building tracks, posting), with a progress bar, clips done and a rough time left. Once it is posted: when the last recording finished and where its transcript went. It also says if the speech model is still loading. Only you can see the reply. |
 | `/scribe export [format]` | Offers this server's finished sessions (the 25 most recent) in a menu. Pick any number and you get one file with every spoken line from all of them: `jsonl` (default) or `csv`. Only you see the menu and the file. |
 | `/scribe help` | Lists the commands. Only you can see the reply. |
 | `/roll [dice] [for]` | Rolls dice in the open and shows the working, e.g. `@Ferren 🎲 rolled \`2d20kh1 + 5\` for stealth: [~~4~~, 17] + 5 = **22**`. Takes `NdM` terms joined by `+`/`-`, plain numbers, `d%` for d100, and `khN`/`klN` to keep the highest or lowest N dice (`4d6kh3`, `2d20kh1` for advantage, `2d20kl1` for disadvantage). With no dice given it rolls a `d20`. Up to 100 dice of up to 1000 sides per term. A roll made while the server is being recorded goes into the transcript as a chat line credited to whoever rolled, even when text chat is not being recorded. |
 
-The bot also stops by itself two minutes after the last person leaves, and when the container is stopped. In every case it writes the files and posts the transcript before it exits.
+The bot also stops by itself two minutes after the last person leaves. When it stops for that reason, or any other, it writes the files and posts the transcript before it exits. Restarts are the exception (see below).
+
+### Restarts and updates
+
+Stopping the container, for example to update it, does not end a recording. The bot saves where each recording is up to and leaves the call. When it starts again it rejoins the same voice channel and keeps recording into the same session. It says so in the channel both times. The time it was down is a pause in the session, shown in `transcript.md` as `_[00:41:10] Recording paused while the bot restarted for 00:00:52._`, so later timestamps still match the wall clock and the audio tracks stay in sync. A recording someone had paused comes back still paused.
+
+Clips that had not been transcribed yet are picked up again after the restart. So is a recording that had already been stopped and was still working through its backlog. Its progress message says it is on hold, and a new one is posted when the bot is back.
+
+A suspended recording is finished instead of resumed, as it stood when the bot went down, in these cases:
+- The bot is down longer than `SCRIVENER_RESUME_WINDOW_MS` (15 minutes by default).
+- Nobody is left in the voice channel when it comes back.
+- It cannot rejoin the channel.
+
+Nothing said while the bot was down is recorded, and neither is chat posted then. A crash, as opposed to a stop, does not get the chance to save state. Its session folder keeps the clips and `events.jsonl`, but the recording is not resumed. Set `SCRIVENER_RESUME_AFTER_RESTART=false` to finish every recording on a stop, as before.
 
 A pause does not stop the session clock. The paused stretch is silence in the audio tracks and a gap in the transcript, marked with a line like `_[00:12:30] Recording paused by Gig for 00:03:10._`, so every later timestamp still matches the wall clock. `session.json` and `transcript.json` list the pauses (`pauses`, `pausedMs`).
 
@@ -56,6 +69,7 @@ JSONL has one JSON object per line. CSV has a header row and uses CRLF line endi
 | `transcript.json` | Every line with start and end in ms, speaker ID and name, plus the list of clips. |
 | `events.jsonl` | Transcribed clips, appended as the call goes, so a crash still leaves a record. |
 | `chat.jsonl` | Text messages posted anywhere in the server during the recording, appended as they arrive. They are also interleaved into `transcript.md` (marked 💬) and listed under `chat` in `transcript.json`. |
+| `resume.json` | Only while the bot is down mid-recording: what it needs to carry on. It is removed when the session is picked up again. |
 | `session.json` | Metadata. `startedAtMs` is the sync anchor: every timestamp is an offset from it. |
 | `tracks/<name>.ogg` | One track per speaker. Every track is exactly as long as the session and is silent while that person isn't talking. |
 | `tracks/mix.ogg` | All speakers mixed together. |
@@ -101,6 +115,8 @@ These are all environment variables. The defaults suit spacedock.
 | `SCRIVENER_MAX_CLIP_MS` | `30000` | Long speeches are split at this length so they transcribe while the call is still going. |
 | `SCRIVENER_MIN_CLIP_MS` | `400` | Clips shorter than this are kept as audio but not transcribed, because Whisper invents words on coughs and clicks. |
 | `SCRIVENER_ALONE_TIMEOUT_MS` | `120000` | How long the bot stays alone in the channel before it stops. |
+| `SCRIVENER_RESUME_AFTER_RESTART` | `true` | On a container stop, suspend recordings and carry on with them when the bot starts again, instead of finishing them. |
+| `SCRIVENER_RESUME_WINDOW_MS` | `900000` | If the bot is down longer than this, suspended recordings are finished as they stood instead of resumed. |
 | `SCRIVENER_RECORD_CHAT` | `true` | Also record text messages posted in the server while recording. Needs the Message Content intent. |
 | `SCRIVENER_EXPORT_DIR` | `/data/exports` | Where an export too big to upload to Discord is saved. On spacedock that is `/var/lib/scrivener/exports`. |
 

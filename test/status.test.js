@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HELP, bar, describe, etaMs } from '../src/status.js';
+import { HELP, bar, describe, describeLast, etaMs, finishedLine } from '../src/status.js';
+import { Throughput } from '../src/transcriber.js';
 import { buildLines, toMarkdown } from '../src/output.js';
 import { RecordingSession } from '../src/session.js';
 
@@ -42,8 +43,52 @@ test('etaMs waits for evidence, then extrapolates the drain rate', () => {
   assert.equal(etaMs({ ...s, audioDoneMs: 120_000 }, 10_000), 0);
 });
 
+test('etaMs uses the worker\'s speed until the drain rate has something to say', () => {
+  const s = { ...base, audioMs: 120_000, audioDoneMs: 30_000, rate: 3 };
+  // 90 s of audio at 3x real time.
+  assert.equal(etaMs(s, 0), 30_000, 'while recording');
+  assert.equal(etaMs({ ...s, drain: { atMs: 0, audioDoneMs: 30_000 } }, 2_000), 30_000, 'just after the stop');
+  assert.equal(etaMs({ ...s, drain: { atMs: 0, audioDoneMs: 0 } }, 10_000), 30_000, 'drain rate wins once it can');
+  assert.equal(etaMs({ ...s, drain: { atMs: 0, audioDoneMs: 0 } }, 20_000), 60_000);
+  assert.equal(etaMs({ ...s, modelLoading: true }, 0), null, 'no guessing while the model loads');
+});
+
+test('Throughput weighs recent clips and ignores idle time', () => {
+  const t = new Throughput(0.5);
+  assert.equal(t.rate, null);
+  t.record(10_000, 5_000);
+  assert.equal(t.rate, 2);
+  t.record(0, 1_000);
+  assert.equal(t.rate, 2, 'nothing to learn from an empty clip');
+  t.record(10_000, 10_000);
+  // (5000 + 10000) / (2500 + 10000)
+  assert.equal(t.rate, 1.2);
+});
+
+test('while recording, status says whether transcription keeps up', () => {
+  assert.match(describe({ ...base, phase: 'recording', clipsDone: 50, audioDoneMs: 300_000 }), /so far; transcription is keeping up\.$/);
+  assert.match(
+    describe({ ...base, phase: 'recording', audioDoneMs: 180_000, rate: 2 }),
+    /2 clip\(s\) waiting to transcribe \(00:02:00 of audio, about 1 minute to catch up\)\./,
+  );
+  assert.match(describe({ ...base, phase: 'recording', modelLoading: true }), /speech model is still loading/);
+  assert.match(describe({ ...base, phase: 'transcribing', reason: 'x', modelLoading: true }), /speech model is still loading/);
+});
+
+test('the finished line and the status after it', () => {
+  assert.equal(finishedLine({ channelName: 'Council', lines: 40, failed: 0, posted: true }), '✅ Transcript of **Council** finished and posted: 40 line(s).');
+  assert.match(finishedLine({ channelName: 'Council', lines: 40, failed: 2, posted: true }), /2 clip\(s\) failed/);
+  assert.match(finishedLine({ channelName: 'Council', lines: 40, posted: false }), /could not be posted/);
+
+  assert.equal(describeLast(undefined), 'Not recording.');
+  assert.equal(
+    describeLast({ channelName: 'Council', finishedAt: 1_790_000_000_000, lines: 40, posted: true, postedIn: '<#1>' }),
+    'Not recording. The last recording, of **Council**, finished <t:1790000000:R> with 40 line(s); its transcript was posted in <#1>.',
+  );
+});
+
 test('status reads right in every phase', () => {
-  assert.match(describe({ ...base, phase: 'recording' }), /Recording \*\*Council\*\* for 00:10:00: 3 speaker\(s\), 40 line\(s\) so far, 2 clip\(s\) waiting/);
+  assert.match(describe({ ...base, phase: 'recording' }), /Recording \*\*Council\*\* for 00:10:00: 3 speaker\(s\), 40 line\(s\) so far; 2 clip\(s\) waiting to transcribe \(00:00:10 of audio\)\./);
   assert.match(describe({ ...base, phase: 'recording', pausedMs: 65_000 }), /\(00:01:05 of it paused\)/);
   assert.match(describe({ ...base, phase: 'paused', pausedBy: 'Gig', pausedForMs: 30_000 }), /paused by Gig \(for 00:00:30\).*\/scribe resume/);
 

@@ -5,12 +5,39 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 
+/**
+ * How fast the worker gets through audio, as audio ms per wall ms of work,
+ * weighted towards recent clips. Idle time is not counted, so it stays true
+ * whether the queue has been empty or full.
+ */
+export class Throughput {
+  #audioMs = 0;
+  #busyMs = 0;
+
+  constructor(decay = 0.8) {
+    this.decay = decay;
+  }
+
+  record(audioMs, busyMs) {
+    if (!(audioMs > 0) || !(busyMs > 0)) return;
+    this.#audioMs = this.#audioMs * this.decay + audioMs;
+    this.#busyMs = this.#busyMs * this.decay + busyMs;
+  }
+
+  /** @returns {number | null} null until a clip has been timed */
+  get rate() {
+    return this.#busyMs > 0 ? this.#audioMs / this.#busyMs : null;
+  }
+}
+
 export class Transcriber extends EventEmitter {
   #cfg;
   #proc = null;
   #pending = new Map();
   #nextId = 1;
   #closing = false;
+  #lastDoneAt = 0; // when the worker last finished a clip (or became ready)
+  throughput = new Throughput();
   ready = false;
 
   constructor(cfg) {
@@ -57,6 +84,7 @@ export class Transcriber extends EventEmitter {
     }
     if (msg.ready) {
       this.ready = true;
+      this.#lastDoneAt = Date.now();
       console.log(`[transcriber] model ready (${msg.model} on ${msg.device})`);
       this.emit('ready');
       return;
@@ -64,21 +92,27 @@ export class Transcriber extends EventEmitter {
     const job = this.#pending.get(msg.id);
     if (!job) return;
     this.#pending.delete(msg.id);
+    // The worker takes one clip at a time, so this one started when it was
+    // sent or when the one before it finished, whichever was later.
+    const now = Date.now();
+    if (!msg.error) this.throughput.record(job.audioMs, now - Math.max(job.sentAt, this.#lastDoneAt));
+    this.#lastDoneAt = now;
     if (msg.error) job.reject(new Error(msg.error));
     else job.resolve(msg);
   }
 
   /**
    * @param {string} wavPath
+   * @param {number} [audioMs] the clip's length, to measure throughput
    * @returns {Promise<{segments: {start:number,end:number,text:string}[], language?: string}>}
    */
-  transcribe(wavPath) {
+  transcribe(wavPath, audioMs = 0) {
     if (!this.#proc || this.#proc.exitCode !== null) {
       return Promise.reject(new Error('transcription worker is not running'));
     }
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      this.#pending.set(id, { resolve, reject, audioMs, sentAt: Date.now() });
       this.#proc.stdin.write(JSON.stringify({ id, path: wavPath }) + '\n');
     });
   }
@@ -87,8 +121,28 @@ export class Transcriber extends EventEmitter {
     return this.#pending.size;
   }
 
+  /** Audio ms per wall ms, or null before the first clip is timed. */
+  get rate() {
+    return this.throughput.rate;
+  }
+
+  /** Let the worker finish what it has been sent, then exit. */
   stop() {
     this.#closing = true;
     this.#proc?.stdin.end();
+  }
+
+  /**
+   * Stop the worker now, abandoning its queue: every pending clip is
+   * rejected. For a restart, where the queue is picked up again afterwards.
+   * @returns {Promise<void>} once the worker has exited
+   */
+  kill() {
+    this.#closing = true;
+    const proc = this.#proc;
+    if (!proc || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
+    const exited = new Promise((resolve) => proc.once('exit', resolve));
+    proc.kill('SIGTERM');
+    return exited;
   }
 }

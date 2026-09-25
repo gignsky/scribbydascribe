@@ -52,9 +52,12 @@ in
       WHISPER_LANGUAGE = "en";
     };
     volumes = [ "/var/lib/scrivener:/data" ];
-    # On stop the bot finishes any recording in progress (drains the
-    # transcription queue, writes the files, posts the transcript) before
-    # exiting, so give it time rather than the default 10 s.
+    # On stop the bot suspends any recording in progress and carries on with
+    # it when it starts again (a `nix flake update scrivener` + switch is a
+    # restart), which takes a few seconds. With
+    # SCRIVENER_RESUME_AFTER_RESTART=false it instead finishes each one
+    # (drains the transcription queue, writes the files, posts the
+    # transcript) before exiting, so give it time rather than the default 10 s.
     extraOptions = [ "--stop-timeout=600" ];
   };
 

@@ -48,6 +48,13 @@ export function loadConfig() {
     maxClipMs: int('SCRIVENER_MAX_CLIP_MS', 30_000),
     // Leave and finish the session after the bot has been alone this long (ms).
     aloneTimeoutMs: int('SCRIVENER_ALONE_TIMEOUT_MS', 120_000),
+    // When the bot is stopped (an update, a reboot), keep recordings where
+    // they are and carry on with them when it starts again, instead of
+    // finishing them.
+    resumeAfterRestart: bool('SCRIVENER_RESUME_AFTER_RESTART', true),
+    // ...unless it is down longer than this (ms): then each suspended
+    // recording is finished as it stood when the bot went down.
+    resumeWindowMs: int('SCRIVENER_RESUME_WINDOW_MS', 15 * 60_000),
     // Transcription worker.
     python: str('SCRIVENER_PYTHON', 'python3'),
     workerScript: str('SCRIVENER_WORKER', new URL('../worker/transcribe.py', import.meta.url).pathname),
