@@ -8,6 +8,7 @@
 //   /scribe status  what is being recorded, or how far a stopped one has got
 //   /scribe export  combine chosen sessions' transcripts into one file
 //   /scribe help    list the commands
+//   /roll           roll dice, e.g. `/roll 2d20kh1+5`; kept in any recording
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -28,6 +29,7 @@ import { RecordingSession } from './session.js';
 import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
 import { HELP, describe } from './status.js';
+import { roll } from './dice.js';
 import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport } from './export.js';
 
 const cfg = loadConfig();
@@ -131,6 +133,15 @@ const command = new SlashCommandBuilder()
   )
   .addSubcommand((s) => s.setName('help').setDescription('List the /scribe commands'));
 
+const rollCommand = new SlashCommandBuilder()
+  .setName('roll')
+  .setDescription('Roll dice, e.g. d20, 2d6+3, 4d6kh3 or 2d20kh1+5')
+  .setContexts(InteractionContextType.Guild)
+  .addStringOption((o) => o.setName('dice').setDescription('Dice notation (default: d20)').setMaxLength(100))
+  .addStringOption((o) => o.setName('for').setDescription('What the roll is for, e.g. "perception"').setMaxLength(100));
+
+const commands = [command.toJSON(), rollCommand.toJSON()];
+
 // A bot upload is capped at 10 MiB; anything larger is saved on the host instead.
 const MAX_UPLOAD = 10 * 1024 * 1024;
 
@@ -176,14 +187,40 @@ async function sendExport(i) {
   });
 }
 
+/** /roll: roll in public, and into this server's recording if there is one. */
+async function rollDice(i) {
+  const expr = i.options.getString('dice') ?? 'd20';
+  const label = i.options.getString('for');
+  let r;
+  try {
+    r = roll(expr);
+  } catch (err) {
+    return i.reply({ content: `🎲 ${err.message}`, flags: MessageFlags.Ephemeral });
+  }
+  // Show the working only when there is some; `d20` alone is just the number.
+  // A hundred dice of working can outrun Discord's 2000-character limit.
+  const plain = r.terms.length === 1 && r.terms[0].count === 1;
+  const shown = plain || r.working.length > 1500 ? '' : ` ${r.working} =`;
+  const text = `🎲 rolled \`${r.notation}\`${label ? ` for ${label}` : ''}:${shown} **${r.total}**`;
+  const reply = await i.reply({ content: `${i.user} ${text}`, withResponse: true });
+  sessions.get(i.guildId)?.recordRoll({
+    at: i.createdTimestamp,
+    messageId: reply.resource?.message?.id ?? null,
+    channel: i.channel,
+    user: i.user,
+    member: i.member,
+    text,
+  });
+}
+
 async function onReady(c) {
   console.log(`[bot] logged in as ${c.user.tag}${recordChat ? '; recording text chat too' : ''}`);
   if (cfg.guildId) {
     const guild = await c.guilds.fetch(cfg.guildId);
-    await guild.commands.set([command.toJSON()]);
+    await guild.commands.set(commands);
     console.log(`[bot] commands registered in ${guild.name}`);
   } else {
-    await c.application.commands.set([command.toJSON()]);
+    await c.application.commands.set(commands);
     console.log('[bot] commands registered globally');
   }
 }
@@ -243,6 +280,7 @@ async function onInteraction(i) {
       return i.editReply({ content: `Export failed: ${err.message}`, components: [] }).catch(() => {});
     });
   }
+  if (i.isChatInputCommand() && i.commandName === 'roll' && i.inGuild()) return rollDice(i);
   if (!i.isChatInputCommand() || i.commandName !== 'scribe' || !i.inGuild()) return;
   const sub = i.options.getSubcommand();
   const current = sessions.get(i.guildId);

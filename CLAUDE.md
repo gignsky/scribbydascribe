@@ -6,8 +6,9 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 
 | Path | Role |
 |---|---|
-| `src/index.js` | discord.js client, the `/scribe` commands (start, pause, resume, stop, status, export, help), auto-stop and graceful shutdown |
+| `src/index.js` | discord.js client, the `/scribe` commands (start, pause, resume, stop, status, export, help) and `/roll`, auto-stop and graceful shutdown |
 | `src/intents.js` | which gateway intents to ask for, and the Message Content grant check that keeps a refusal from being fatal |
+| `src/dice.js` | dice notation for `/roll`: parse, roll, and show the working |
 | `src/status.js` | the help text and the `/scribe status` wording, as pure functions of a session snapshot |
 | `src/export.js` | lists finished sessions and renders the combined JSONL/CSV export |
 | `src/session.js` | one recording: voice receive, a clip per speaker's turn, pause/resume, text chat, the transcription queue and its progress, final outputs |
@@ -22,7 +23,7 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 
 ```
 nix develop -c npm ci
-nix develop -c npm test          # 30 tests, incl. an Opus -> Whisper speech round trip
+nix develop -c npm test          # 37 tests, incl. an Opus -> Whisper speech round trip
 nix build .#scrivener            # the program; runs the unit tests in checkPhase
 nix build                        # the OCI image tarball
 ```

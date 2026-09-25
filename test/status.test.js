@@ -179,3 +179,34 @@ test('markdown interleaves chat with speech by time', () => {
   const md = toMarkdown({ guildName: 'R', channelName: 'C', startedAt: '2026-09-24T20:00:00.000Z', durationMs: 10_000 }, lines, chat);
   assert.match(md, /Roll for it\.\n\n💬 \*\*\[00:00:04\] Ferren in #dice:\*\* rolled 17 ⏎ with advantage\n\n\*\*\[00:00:09\] Gig:\*\* Nice\./);
 });
+
+test('a /roll made while recording goes in the chat, credited to the roller', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scrivener-roll-'));
+  const guild = { id: 'g', name: 'Realm', members: { cache: new Map() } };
+  const s = new RecordingSession({
+    cfg: { ffmpeg: 'ffmpeg', minClipMs: 400, silenceMs: 800, maxClipMs: 30_000 },
+    transcriber: {},
+    voiceChannel: { id: 'v', name: 'Council', guild },
+    textChannel: {},
+    startedBy: { tag: 'gig' },
+  });
+  const t0 = Date.now() - 60_000;
+  s.dir = dir;
+  s.startedAt = t0;
+  s.connection = { receiver: { speaking: { users: new Map() } }, destroy() {} };
+
+  const user = { id: 'b', displayName: 'Ferren', username: 'ferren' };
+  const channel = { id: 't2', name: 'dice' };
+  assert.equal(s.recordRoll({ at: t0 - 1, channel, user, text: 'early' }), false, 'before the start');
+  assert.ok(s.recordRoll({ at: t0 + 7_000, messageId: 'm', channel, user, text: '🎲 rolled `d20`: [17] = **17**' }));
+  s.pause('Gig');
+  assert.equal(s.recordRoll({ channel, user, text: 'hidden' }), false, 'paused');
+  s.resume();
+
+  const res = await s.stop('stopped');
+  assert.equal(s.recordRoll({ channel, user, text: 'late' }), false, 'stopped');
+  assert.deepEqual(res.chat, [
+    { atMs: 7_000, messageId: 'm', channelId: 't2', channel: 'dice', authorId: 'b', author: 'Ferren', bot: false, text: '🎲 rolled `d20`: [17] = **17**', attachments: [] },
+  ]);
+  assert.match(readFileSync(join(dir, 'transcript.md'), 'utf8'), /💬 \*\*\[00:00:07\] Ferren in #dice:\*\* 🎲 rolled `d20`/);
+});

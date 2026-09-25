@@ -259,12 +259,37 @@ export class RecordingSession {
       text,
       attachments,
     };
+    this.#addChat(entry);
+    return true;
+  }
+
+  /**
+   * A /roll made in this server while recording. The bot's own messages are
+   * never recorded, so the roll goes in here, credited to whoever rolled.
+   * It needs no Message Content intent, so it is kept even when chat is not.
+   */
+  recordRoll({ at = Date.now(), messageId = null, channel, user, member, text }) {
+    if (this.stopping || this.pausedAt || !this.startedAt || at < this.startedAt) return false;
+    this.#addChat({
+      atMs: at - this.startedAt,
+      messageId,
+      channelId: channel?.id ?? null,
+      channel: channel?.name ?? channel?.id ?? null,
+      authorId: user.id,
+      author: member?.displayName ?? user.displayName ?? user.username,
+      bot: false,
+      text,
+      attachments: [],
+    });
+    return true;
+  }
+
+  #addChat(entry) {
     this.#chat.push(entry);
     // Written as we go, like events.jsonl, so a crash still leaves a record.
     this.#chatWrites = this.#chatWrites
       .then(() => appendFile(join(this.dir, 'chat.jsonl'), JSON.stringify(entry) + '\n'))
       .catch((err) => console.error('[session] writing chat.jsonl failed:', err.message));
-    return true;
   }
 
   #pausedMs(now = this.stoppedAt || Date.now()) {
