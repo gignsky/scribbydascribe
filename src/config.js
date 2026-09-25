@@ -9,6 +9,14 @@ function int(name, fallback) {
   return n;
 }
 
+function bool(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  if (/^(1|true|yes|on)$/i.test(raw)) return true;
+  if (/^(0|false|no|off)$/i.test(raw)) return false;
+  throw new Error(`${name} must be true or false, got "${raw}"`);
+}
+
 function str(name, fallback) {
   const raw = process.env[name];
   return raw === undefined || raw === '' ? fallback : raw;
@@ -25,6 +33,9 @@ export function loadConfig() {
     guildId: str('DISCORD_GUILD_ID', null),
     // Where session folders are written.
     dataDir: str('SCRIVENER_DATA_DIR', '/data/sessions'),
+    // Also keep text messages posted anywhere in the server while recording.
+    // Needs the Message Content intent switched on in the developer portal.
+    recordChat: bool('SCRIVENER_RECORD_CHAT', true),
     // Where /scribe export saves files too big to upload to Discord.
     exportDir: str('SCRIVENER_EXPORT_DIR', '/data/exports'),
     // A speaker's clip ends after this much silence (ms).

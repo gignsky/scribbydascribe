@@ -55,7 +55,14 @@ function srtClock(ms) {
   return `${clock(t)},${String(t % 1000).padStart(3, '0')}`;
 }
 
-export function toMarkdown(meta, lines) {
+/** One chat message as a transcript line: `💬 [00:01:02] Gig in #general: text` */
+export function chatLine(m) {
+  const files = (m.attachments ?? []).map((a) => `[${a.name}](${a.url})`);
+  const body = [m.text, ...files].filter(Boolean).join(' ');
+  return `💬 **[${clock(m.atMs)}] ${m.author} in #${m.channel}:** ${body.replace(/\n+/g, ' ⏎ ')}\n`;
+}
+
+export function toMarkdown(meta, lines, chat = []) {
   const started = new Date(meta.startedAt);
   const speakers = [...new Set(lines.map((l) => l.speaker))];
   const pauses = meta.pauses ?? [];
@@ -65,13 +72,17 @@ export function toMarkdown(meta, lines) {
     `- Started: ${started.toISOString()}`,
     `- Duration: ${clock(meta.durationMs)}`,
     `- Speakers: ${speakers.length ? speakers.join(', ') : '(none)'}`,
+    ...(chat.length ? [`- Chat: ${chat.length} message(s) in ${new Set(chat.map((m) => m.channelId)).size} text channel(s), marked 💬`] : []),
     ...(pauses.length ? [`- Paused: ${pauses.length} time(s), ${clock(meta.pausedMs ?? 0)} in total`] : []),
     `- Timestamps are offsets from the start time above.`,
     '',
     '---',
     '',
   ];
-  const said = paragraphs(lines).map((p) => ({ at: p.startMs, text: `**[${clock(p.startMs)}] ${p.speaker}:** ${p.text}\n` }));
+  const said = [
+    ...paragraphs(lines).map((p) => ({ at: p.startMs, text: `**[${clock(p.startMs)}] ${p.speaker}:** ${p.text}\n` })),
+    ...chat.map((m) => ({ at: m.atMs, text: chatLine(m) })),
+  ];
   if (!said.length) return head.join('\n') + '_Nothing was transcribed._\n';
   // Mark each pause where it happened, so a gap in the talk reads as intended.
   const marks = pauses.map((p) => ({
@@ -91,8 +102,8 @@ export function toSrt(lines) {
     .join('\n');
 }
 
-export function toJson(meta, lines, clips) {
-  return JSON.stringify({ ...meta, lines, clips }, null, 2) + '\n';
+export function toJson(meta, lines, clips, chat = []) {
+  return JSON.stringify({ ...meta, lines, chat, clips }, null, 2) + '\n';
 }
 
 /** Filesystem-safe name for a speaker's track. */

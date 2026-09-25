@@ -78,3 +78,17 @@ test('renderExport writes valid jsonl and csv', async () => {
   assert.match(csv, /,"Line one\nline two"\r\n$/);
   assert.equal(renderExport([], 'jsonl'), '');
 });
+
+test('exportRows includes chat messages as kind=chat rows', () => {
+  const s = {
+    folder: 'f', guildName: 'Realm', channelName: 'Council', startedAt: '2026-09-24T20:00:00.000Z', startedAtMs: Date.UTC(2026, 8, 24, 20),
+    lines: [{ startMs: 1000, endMs: 2000, speakerId: 'a', speaker: 'Gig', text: 'Roll.' }],
+    chat: [{ atMs: 1500, channel: 'dice', authorId: 'b', author: 'Ferren', text: '17', attachments: [{ name: 'x.png', url: 'https://cdn/x.png' }] }],
+  };
+  const rows = exportRows([s]);
+  assert.deepEqual(rows.map((r) => [r.kind, r.text_channel, r.speaker, r.start_ms, r.text]), [
+    ['speech', '', 'Gig', 1000, 'Roll.'],
+    ['chat', 'dice', 'Ferren', 1500, '17 https://cdn/x.png'],
+  ]);
+  assert.match(choiceFor({ ...s, durationMs: 1, key: 'k' }).description, /1 chat message\(s\)/);
+});

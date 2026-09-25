@@ -39,6 +39,8 @@ export class RecordingSession {
   #audioMs = 0; // audio sent for transcription
   #audioDoneMs = 0; // ...of which finished
   #drain = null; // { atMs, audioDoneMs } when stopped, to estimate time left
+  #chat = []; // text messages posted in the server while recording
+  #chatWrites = Promise.resolve(); // keeps chat.jsonl appends in order
 
   /**
    * @param {object} o
@@ -227,12 +229,42 @@ export class RecordingSession {
       reason: this.reason ?? null,
       speakers: this.#names.size,
       lines: this.#entries.reduce((n, e) => n + e.segments.length, 0),
+      chat: this.#chat.length,
       clips: this.#clips.length,
       clipsDone: this.#clipsDone,
       audioMs: this.#audioMs,
       audioDoneMs: this.#audioDoneMs,
       drain: this.#drain && { ...this.#drain },
     };
+  }
+
+  /**
+   * Keep a text message posted anywhere in the server during the recording,
+   * so it lines up with the speech. Like speech, nothing is kept while paused.
+   * @param {import('discord.js').Message} msg
+   */
+  recordMessage(msg) {
+    if (this.stopping || this.pausedAt || !this.startedAt || msg.createdTimestamp < this.startedAt) return false;
+    const text = msg.cleanContent;
+    const attachments = [...msg.attachments.values()].map((a) => ({ name: a.name, url: a.url }));
+    if (!text && !attachments.length) return false; // stickers, embeds-only, etc.
+    const entry = {
+      atMs: msg.createdTimestamp - this.startedAt,
+      messageId: msg.id,
+      channelId: msg.channelId,
+      channel: msg.channel?.name ?? msg.channelId,
+      authorId: msg.author.id,
+      author: msg.member?.displayName ?? msg.author.displayName ?? msg.author.username,
+      bot: msg.author.bot,
+      text,
+      attachments,
+    };
+    this.#chat.push(entry);
+    // Written as we go, like events.jsonl, so a crash still leaves a record.
+    this.#chatWrites = this.#chatWrites
+      .then(() => appendFile(join(this.dir, 'chat.jsonl'), JSON.stringify(entry) + '\n'))
+      .catch((err) => console.error('[session] writing chat.jsonl failed:', err.message));
+    return true;
   }
 
   #pausedMs(now = this.stoppedAt || Date.now()) {
@@ -300,12 +332,14 @@ export class RecordingSession {
     while (this.#jobs.size) await Promise.allSettled([...this.#jobs]);
 
     this.#phase = 'writing';
+    await this.#chatWrites;
     const meta = this.meta;
     const lines = buildLines(this.#entries);
-    const md = toMarkdown(meta, lines);
+    const chat = [...this.#chat].sort((a, b) => a.atMs - b.atMs);
+    const md = toMarkdown(meta, lines, chat);
     await writeFile(join(this.dir, 'transcript.md'), md);
     await writeFile(join(this.dir, 'transcript.srt'), toSrt(lines));
-    await writeFile(join(this.dir, 'transcript.json'), toJson(meta, lines, this.#clips));
+    await writeFile(join(this.dir, 'transcript.json'), toJson(meta, lines, this.#clips, chat));
 
     this.#phase = 'tracks';
     let tracksError = null;
@@ -324,6 +358,6 @@ export class RecordingSession {
     await this.#writeMeta({ stoppedAt: new Date(this.stoppedAt).toISOString(), reason, failedClips: this.#failed, tracksError });
     this.#phase = 'done';
 
-    return { dir: this.dir, meta, lines, reason, failed: this.#failed, tracksError };
+    return { dir: this.dir, meta, lines, chat, reason, failed: this.#failed, tracksError };
   }
 }

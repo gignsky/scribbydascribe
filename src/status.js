@@ -6,8 +6,8 @@ import { clock } from './output.js';
 export const HELP = [
   '**scrivener** records this server\'s voice calls and writes a transcript labelled by speaker.',
   '',
-  '`/scribe start`: join your voice channel and start recording. Everyone in the call is told.',
-  '`/scribe pause`: stop capturing audio but stay in the call. Nothing said while paused is saved.',
+  '`/scribe start`: join your voice channel and start recording, along with messages posted in this server\'s text channels. Everyone in the call is told.',
+  '`/scribe pause`: stop capturing but stay in the call. Nothing said or posted while paused is saved.',
   '`/scribe resume`: start capturing again after a pause.',
   '`/scribe stop`: end the recording. The transcript is posted here once it is finished.',
   '`/scribe status`: what is being recorded, or how far along a stopped recording\'s transcript is.',
@@ -46,7 +46,7 @@ function roughly(ms) {
 }
 
 function soFar(s) {
-  return `${s.speakers} speaker(s), ${s.lines} line(s) so far`;
+  return `${s.speakers} speaker(s), ${s.lines} line(s)` + (s.chat ? `, ${s.chat} chat message(s)` : '') + ' so far';
 }
 
 /** One session's status line(s). */

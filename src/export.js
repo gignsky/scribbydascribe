@@ -1,5 +1,5 @@
 // /scribe export: combine the transcripts of chosen sessions into one file,
-// one row per spoken line, for loading into another dataset.
+// one row per spoken line or chat message, for loading into another dataset.
 
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -34,16 +34,21 @@ export async function listSessions(sessionsDir, guildId) {
   return out.sort((a, b) => b.startedAtMs - a.startedAtMs);
 }
 
-/** Every line of the chosen sessions as flat rows, in time order. */
+/** Every spoken line and chat message of the chosen sessions as flat rows, in time order. */
 export function exportRows(sessions) {
   const rows = [];
   for (const s of sessions) {
+    const common = {
+      session: s.folder,
+      guild: s.guildName,
+      channel: s.channelName,
+      session_started_at: s.startedAt,
+    };
     for (const l of s.lines ?? []) {
       rows.push({
-        session: s.folder,
-        guild: s.guildName,
-        channel: s.channelName,
-        session_started_at: s.startedAt,
+        ...common,
+        kind: 'speech',
+        text_channel: '',
         speaker: l.speaker,
         speaker_id: l.speakerId,
         start_ms: l.startMs,
@@ -52,11 +57,24 @@ export function exportRows(sessions) {
         text: l.text,
       });
     }
+    for (const m of s.chat ?? []) {
+      rows.push({
+        ...common,
+        kind: 'chat',
+        text_channel: m.channel,
+        speaker: m.author,
+        speaker_id: m.authorId,
+        start_ms: m.atMs,
+        end_ms: m.atMs,
+        start_at: new Date(s.startedAtMs + m.atMs).toISOString(),
+        text: [m.text, ...(m.attachments ?? []).map((a) => a.url)].filter(Boolean).join(' '),
+      });
+    }
   }
   return rows.sort((a, b) => a.start_at.localeCompare(b.start_at) || a.session.localeCompare(b.session));
 }
 
-export const COLUMNS = ['session', 'guild', 'channel', 'session_started_at', 'speaker', 'speaker_id', 'start_ms', 'end_ms', 'start_at', 'text'];
+export const COLUMNS = ['session', 'guild', 'channel', 'session_started_at', 'kind', 'text_channel', 'speaker', 'speaker_id', 'start_ms', 'end_ms', 'start_at', 'text'];
 
 function csvField(v) {
   const s = v == null ? '' : String(v);
@@ -85,7 +103,10 @@ export function choiceFor(s) {
   const speakers = new Set((s.lines ?? []).map((l) => l.speaker)).size;
   return {
     label: `${s.channelName} · ${utc(s.startedAtMs)} UTC`.slice(0, 100),
-    description: `${hms(s.durationMs)}, ${speakers} speaker(s), ${(s.lines ?? []).length} line(s)`.slice(0, 100),
+    description: (
+      `${hms(s.durationMs)}, ${speakers} speaker(s), ${(s.lines ?? []).length} line(s)` +
+      (s.chat?.length ? `, ${s.chat.length} chat message(s)` : '')
+    ).slice(0, 100),
     value: s.key,
   };
 }

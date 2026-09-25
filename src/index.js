@@ -17,6 +17,7 @@ import {
   ChannelType,
   Client,
   Events,
+  GatewayCloseCodes,
   GatewayIntentBits,
   InteractionContextType,
   MessageFlags,
@@ -36,9 +37,43 @@ await mkdir(cfg.dataDir, { recursive: true });
 const transcriber = new Transcriber(cfg);
 transcriber.start();
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
-});
+// Text chat is recorded alongside speech when the privileged Message Content
+// intent is switched on for the bot. If Discord refuses it, carry on without.
+let recordChat = cfg.recordChat;
+
+function makeClient() {
+  const intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates];
+  if (recordChat) intents.push(GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent);
+  const c = new Client({ intents });
+  c.once(Events.ClientReady, onReady);
+  c.on(Events.InteractionCreate, onInteraction);
+  c.on(Events.VoiceStateUpdate, onVoiceStateUpdate);
+  c.on(Events.MessageCreate, onMessage);
+  c.on(Events.ShardDisconnect, (ev) => {
+    if (ev.code === GatewayCloseCodes.DisallowedIntents) withoutChat();
+  });
+  return c;
+}
+
+let fallback = null;
+function withoutChat() {
+  if (!recordChat) return fallback;
+  recordChat = false;
+  console.error(
+    '[bot] Discord refused the Message Content intent, so text chat will NOT be recorded. ' +
+      'Turn on "Message Content Intent" under Bot at https://discord.com/developers/applications and restart, ' +
+      'or set SCRIVENER_RECORD_CHAT=false to stop asking.',
+  );
+  fallback = (async () => {
+    const old = client;
+    client = makeClient();
+    await old.destroy();
+    await client.login(cfg.token);
+  })();
+  return fallback;
+}
+
+const isDisallowedIntents = (err) => err?.code === 'DisallowedIntents' || /disallowed intents/i.test(err?.message ?? '');
 
 /** guildId -> RecordingSession (one recording per server at a time) */
 const sessions = new Map();
@@ -114,8 +149,8 @@ async function sendExport(i) {
   });
 }
 
-client.once(Events.ClientReady, async (c) => {
-  console.log(`[bot] logged in as ${c.user.tag}`);
+async function onReady(c) {
+  console.log(`[bot] logged in as ${c.user.tag}${recordChat ? '; recording text chat too' : ''}`);
   if (cfg.guildId) {
     const guild = await c.guilds.fetch(cfg.guildId);
     await guild.commands.set([command.toJSON()]);
@@ -124,7 +159,13 @@ client.once(Events.ClientReady, async (c) => {
     await c.application.commands.set([command.toJSON()]);
     console.log('[bot] commands registered globally');
   }
-});
+}
+
+/** Text messages anywhere in a server being recorded go into its session. */
+function onMessage(msg) {
+  if (!recordChat || !msg.inGuild() || msg.author.id === msg.client.user.id) return;
+  sessions.get(msg.guildId)?.recordMessage(msg);
+}
 
 /**
  * Stop a session and post its transcript. Idempotent: a stop, a dropped
@@ -156,7 +197,8 @@ async function postTranscript(session, reason) {
   const paused = res.meta.pausedMs > 0 ? ` (${clock(res.meta.pausedMs)} paused)` : '';
   const text =
     `⏹️ Recording of **${session.voiceChannel.name}** ended (${reason}). ` +
-    `${clock(res.meta.durationMs)}${paused}, ${speakers} speaker(s), ${res.lines.length} line(s).` +
+    `${clock(res.meta.durationMs)}${paused}, ${speakers} speaker(s), ${res.lines.length} line(s)` +
+    (res.chat.length ? `, ${res.chat.length} chat message(s).` : '.') +
     (notes.length ? `\n⚠️ ${notes.join('; ')}.` : '');
   try {
     await session.textChannel.send({ content: text, files });
@@ -167,7 +209,7 @@ async function postTranscript(session, reason) {
   return res;
 }
 
-client.on(Events.InteractionCreate, async (i) => {
+async function onInteraction(i) {
   if (i.isStringSelectMenu() && i.customId.startsWith('scribe-export:') && i.inGuild()) {
     return sendExport(i).catch((err) => {
       console.error('[bot] export failed:', err);
@@ -204,8 +246,9 @@ client.on(Events.InteractionCreate, async (i) => {
     // Like the start notice, everyone in the call should know.
     const notice =
       sub === 'pause'
-        ? `⏸️ **Recording of ${name} paused** by ${i.user}. Nothing said now is saved. \`/scribe resume\` continues.`
-        : `🔴 **Recording of ${name} resumed** by ${i.user}. Everything said in the channel is being saved again.`;
+        ? `⏸️ **Recording of ${name} paused** by ${i.user}. Nothing said or posted now is saved. \`/scribe resume\` continues.`
+        : `🔴 **Recording of ${name} resumed** by ${i.user}. ` +
+          (recordChat ? 'Everything said in the channel and posted in the server is being saved again.' : 'Everything said in the channel is being saved again.');
     await i.reply(notice);
     if (current.voiceChannel.isTextBased() && current.voiceChannel.id !== i.channelId) {
       await current.voiceChannel.send(notice).catch(() => {});
@@ -255,16 +298,19 @@ client.on(Events.InteractionCreate, async (i) => {
   // Everyone in the call should know they are being recorded.
   const notice =
     `🔴 **Recording and transcribing ${voiceChannel.name}**, started by ${i.user}. ` +
-    `Everything said in the channel is being saved. Use \`/scribe stop\` to end it.`;
+    (recordChat
+      ? `Everything said in the channel, and every message posted in this server's text channels, is being saved. `
+      : `Everything said in the channel is being saved. `) +
+    `Use \`/scribe stop\` to end it.`;
   if (i.deferred) await i.editReply(notice);
   else await i.channel.send(notice);
   if (voiceChannel.isTextBased() && voiceChannel.id !== i.channelId) {
     await voiceChannel.send(notice).catch(() => {});
   }
-});
+}
 
 // Leave on our own once everyone else has gone.
-client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+function onVoiceStateUpdate(oldState, newState) {
   for (const guildId of new Set([oldState.guild.id, newState.guild.id])) {
     const session = sessions.get(guildId);
     if (!session) continue;
@@ -280,7 +326,7 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
       aloneTimers.delete(guildId);
     }
   }
-});
+}
 
 // A failed reply or a lost interaction must never take down a recording.
 process.on('unhandledRejection', (err) => console.error('[bot] unhandled:', err));
@@ -302,4 +348,10 @@ async function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-await client.login(cfg.token);
+let client = makeClient();
+try {
+  await client.login(cfg.token);
+} catch (err) {
+  if (!recordChat || !isDisallowedIntents(err)) throw err;
+  await withoutChat();
+}

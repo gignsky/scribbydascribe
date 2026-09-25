@@ -20,6 +20,12 @@ The bot also stops by itself two minutes after the last person leaves, and when 
 
 A pause does not stop the session clock. The paused stretch is silence in the audio tracks and a gap in the transcript, marked with a line like `_[00:12:30] Recording paused by Gig for 00:03:10._`, so every later timestamp still matches the wall clock. `session.json` and `transcript.json` list the pauses (`pauses`, `pausedMs`).
 
+### Text chat
+
+While a recording runs, every message posted in any text channel the bot can see is kept, including threads, the voice channel's own chat and other bots' messages (dice rollers, say). Each message gets its offset from the session start, so it lines up with the speech. In `transcript.md` it reads `💬 **[00:14:02] Ferren in #dice:** rolled 17`. Attachments are kept as links. The bot's own messages are skipped, and so is anything posted while the recording is paused. Edits and deletions after a message is posted are not tracked.
+
+This needs Discord's privileged **Message Content** intent (see the setup steps below). If it isn't switched on, the bot still records voice and logs a line saying chat is not being recorded. Set `SCRIVENER_RECORD_CHAT=false` to turn chat recording off.
+
 ### Export format
 
 Each row of an export is one spoken line, in time order across all the chosen sessions:
@@ -29,10 +35,12 @@ Each row of an export is one spoken line, in time order across all the chosen se
 | `session` | The session's folder name |
 | `guild`, `channel` | Server and voice channel names |
 | `session_started_at` | ISO time the session started |
-| `speaker`, `speaker_id` | Display name and Discord user ID |
-| `start_ms`, `end_ms` | Offsets from the session start |
-| `start_at` | ISO time the line was said |
-| `text` | What was said |
+| `kind` | `speech` or `chat` |
+| `text_channel` | For chat, the text channel it was posted in; empty for speech |
+| `speaker`, `speaker_id` | Display name and Discord user ID (the author, for chat) |
+| `start_ms`, `end_ms` | Offsets from the session start (equal, for chat) |
+| `start_at` | ISO time the line was said or posted |
+| `text` | What was said or posted; chat attachments are appended as URLs |
 
 JSONL has one JSON object per line. CSV has a header row and uses CRLF line endings, with RFC 4180 quoting. Discord caps a bot's upload at 10 MiB. A larger export is saved on the host in `/var/lib/scrivener/exports/` (`SCRIVENER_EXPORT_DIR` in the container) instead, and the reply names the file.
 
@@ -46,6 +54,7 @@ JSONL has one JSON object per line. CSV has a header row and uses CRLF line endi
 | `transcript.srt` | Subtitles, one cue per line. Load this against a video to check the sync. |
 | `transcript.json` | Every line with start and end in ms, speaker ID and name, plus the list of clips. |
 | `events.jsonl` | Transcribed clips, appended as the call goes, so a crash still leaves a record. |
+| `chat.jsonl` | Text messages posted anywhere in the server during the recording, appended as they arrive. They are also interleaved into `transcript.md` (marked 💬) and listed under `chat` in `transcript.json`. |
 | `session.json` | Metadata. `startedAtMs` is the sync anchor: every timestamp is an offset from it. |
 | `tracks/<name>.ogg` | One track per speaker. Every track is exactly as long as the session and is silent while that person isn't talking. |
 | `tracks/mix.ogg` | All speakers mixed together. |
@@ -56,8 +65,8 @@ Because every track starts at the same moment as the transcript, lining up video
 ## Setting up the Discord bot (one time)
 
 1. Go to <https://discord.com/developers/applications>, choose **New Application**, open **Bot**, and choose **Reset Token**. Copy the token.
-2. No privileged intents are needed.
-3. Open **OAuth2 → URL Generator**. Select the scopes `bot` and `applications.commands`, and the permissions View Channels, Connect, Send Messages and Attach Files. Open the URL it generates and invite the bot to your server.
+2. On the same **Bot** page, under Privileged Gateway Intents, switch on **Message Content Intent**. This lets the bot record text chat alongside the call. It is the only privileged intent needed; without it, voice is still recorded.
+3. Open **OAuth2 → URL Generator**. Select the scopes `bot` and `applications.commands`, and the permissions View Channels, Connect, Send Messages and Attach Files. Open the URL it generates and invite the bot to your server. Chat is only recorded from text channels where the bot has View Channels, so hide a channel from the bot's role to keep it out.
 4. Optional: to control who may record, use Server Settings → Integrations → scrivener.
 
 ## Deploying on spacedock
@@ -91,6 +100,7 @@ These are all environment variables. The defaults suit spacedock.
 | `SCRIVENER_MAX_CLIP_MS` | `30000` | Long speeches are split at this length so they transcribe while the call is still going. |
 | `SCRIVENER_MIN_CLIP_MS` | `400` | Clips shorter than this are kept as audio but not transcribed, because Whisper invents words on coughs and clicks. |
 | `SCRIVENER_ALONE_TIMEOUT_MS` | `120000` | How long the bot stays alone in the channel before it stops. |
+| `SCRIVENER_RECORD_CHAT` | `true` | Also record text messages posted in the server while recording. Needs the Message Content intent. |
 | `SCRIVENER_EXPORT_DIR` | `/data/exports` | Where an export too big to upload to Discord is saved. On spacedock that is `/var/lib/scrivener/exports`. |
 
 ## Development

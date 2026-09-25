@@ -115,3 +115,67 @@ test('a session pauses, resumes and reports each finishing phase', async () => {
   assert.equal(meta.reason, 'stopped by Gig');
   assert.match(readFileSync(join(dir, 'transcript.md'), 'utf8'), /- Paused: 2 time\(s\)/);
 });
+
+function fakeMessage({ id, at, channelId = 't1', channel = 'general', author = 'Ferren', authorId = 'b', text = '', files = [], bot = false }) {
+  return {
+    id,
+    createdTimestamp: at,
+    channelId,
+    channel: { name: channel },
+    author: { id: authorId, bot, displayName: author, username: author.toLowerCase() },
+    member: { displayName: author },
+    cleanContent: text,
+    attachments: new Map(files.map((f, n) => [String(n), f])),
+  };
+}
+
+test('a session keeps chat posted while recording, not before, while paused or after', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scrivener-chat-'));
+  const guild = { id: 'g', name: 'Realm', members: { cache: new Map() } };
+  const s = new RecordingSession({
+    cfg: { ffmpeg: 'ffmpeg', minClipMs: 400, silenceMs: 800, maxClipMs: 30_000 },
+    transcriber: {},
+    voiceChannel: { id: 'v', name: 'Council', guild },
+    textChannel: {},
+    startedBy: { tag: 'gig' },
+  });
+  const t0 = Date.now() - 60_000;
+  s.dir = dir;
+  s.startedAt = t0;
+  s.connection = { receiver: { speaking: { users: new Map() } }, destroy() {} };
+
+  assert.equal(s.recordMessage(fakeMessage({ id: '0', at: t0 - 1000, text: 'before' })), false, 'posted before the start');
+  assert.ok(s.recordMessage(fakeMessage({ id: '2', at: t0 + 20_000, channel: 'dice', author: 'Avrae', authorId: 'd', bot: true, text: 'Ferren rolls 17' })));
+  assert.ok(s.recordMessage(fakeMessage({ id: '1', at: t0 + 5_000, text: 'Map:', files: [{ name: 'map.png', url: 'https://cdn/map.png' }] })));
+  assert.equal(s.recordMessage(fakeMessage({ id: '3', at: t0 + 6_000 })), false, 'nothing to keep');
+  s.pause('Gig');
+  assert.equal(s.recordMessage(fakeMessage({ id: '4', at: Date.now(), text: 'off the record' })), false, 'paused');
+  s.resume();
+  assert.equal(s.snapshot.chat, 2);
+  assert.match(describe(s.snapshot), /2 chat message\(s\) so far/);
+
+  const res = await s.stop('stopped');
+  assert.equal(s.recordMessage(fakeMessage({ id: '5', at: Date.now(), text: 'after' })), false, 'stopped');
+  assert.deepEqual(res.chat.map((m) => m.messageId), ['1', '2'], 'in time order');
+  assert.deepEqual(res.chat[1], {
+    atMs: 20_000, messageId: '2', channelId: 't1', channel: 'dice', authorId: 'd', author: 'Avrae', bot: true, text: 'Ferren rolls 17', attachments: [],
+  });
+
+  const logged = readFileSync(join(dir, 'chat.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).messageId);
+  assert.deepEqual(logged, ['2', '1'], 'chat.jsonl written as messages arrive');
+  const json = JSON.parse(readFileSync(join(dir, 'transcript.json'), 'utf8'));
+  assert.equal(json.chat.length, 2);
+  const md = readFileSync(join(dir, 'transcript.md'), 'utf8');
+  assert.match(md, /- Chat: 2 message\(s\) in 1 text channel\(s\), marked 💬/);
+  assert.match(md, /💬 \*\*\[00:00:05\] Ferren in #general:\*\* Map: \[map\.png\]\(https:\/\/cdn\/map\.png\)\n\n💬 \*\*\[00:00:20\] Avrae in #dice:\*\* Ferren rolls 17/);
+});
+
+test('markdown interleaves chat with speech by time', () => {
+  const lines = buildLines([
+    { offsetMs: 1000, speakerId: 'a', speaker: 'Gig', segments: [{ start: 0, end: 1, text: 'Roll for it.' }] },
+    { offsetMs: 9000, speakerId: 'a', speaker: 'Gig', segments: [{ start: 0, end: 1, text: 'Nice.' }] },
+  ]);
+  const chat = [{ atMs: 4000, channelId: 't', channel: 'dice', author: 'Ferren', text: 'rolled 17\nwith advantage', attachments: [] }];
+  const md = toMarkdown({ guildName: 'R', channelName: 'C', startedAt: '2026-09-24T20:00:00.000Z', durationMs: 10_000 }, lines, chat);
+  assert.match(md, /Roll for it\.\n\n💬 \*\*\[00:00:04\] Ferren in #dice:\*\* rolled 17 ⏎ with advantage\n\n\*\*\[00:00:09\] Gig:\*\* Nice\./);
+});
