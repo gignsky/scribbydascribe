@@ -15,6 +15,7 @@ Discord sends a bot each person's audio as a separate stream, so speakers never 
 | `/scribe status` | While recording: how long, the speakers so far, the line count and the transcription backlog. After a stop, until the transcript is posted: which step it is on (transcribing, writing files, building tracks, posting), with a progress bar, clips done and a rough time left. Only you can see the reply. |
 | `/scribe export [format]` | Offers this server's finished sessions (the 25 most recent) in a menu. Pick any number and you get one file with every spoken line from all of them: `jsonl` (default) or `csv`. Only you see the menu and the file. |
 | `/scribe help` | Lists the commands. Only you can see the reply. |
+| `/roll [dice] [for]` | Rolls dice in the open and shows the working, e.g. `@Ferren 🎲 rolled \`2d20kh1 + 5\` for stealth: [~~4~~, 17] + 5 = **22**`. Takes `NdM` terms joined by `+`/`-`, plain numbers, `d%` for d100, and `khN`/`klN` to keep the highest or lowest N dice (`4d6kh3`, `2d20kh1` for advantage, `2d20kl1` for disadvantage). With no dice given it rolls a `d20`. Up to 100 dice of up to 1000 sides per term. A roll made while the server is being recorded goes into the transcript as a chat line credited to whoever rolled, even when text chat is not being recorded. |
 
 The bot also stops by itself two minutes after the last person leaves, and when the container is stopped. In every case it writes the files and posts the transcript before it exits.
 
