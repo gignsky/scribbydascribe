@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { choiceFor, exportRows, listSessions, renderExport, COLUMNS } from '../src/export.js';
+import { audioFiles, choiceFor, exportRows, listSessions, planUpload, renderExport, renderMarkdown, COLUMNS } from '../src/export.js';
 import { toJson } from '../src/output.js';
 
 function session(dir, folder, meta, lines) {
@@ -91,4 +91,45 @@ test('exportRows includes chat messages as kind=chat rows', () => {
     ['chat', 'dice', 'Ferren', 1500, '17 https://cdn/x.png'],
   ]);
   assert.match(choiceFor({ ...s, durationMs: 1, key: 'k' }).description, /1 chat message\(s\)/);
+});
+
+test('renderMarkdown combines speech and chat of every chosen session, oldest first', async () => {
+  const { dir } = fixture();
+  const list = await listSessions(dir, 'g1');
+  list[0].chat = [{ atMs: 500, channel: 'dice', channelId: 'd', authorId: 'b', author: 'Ferren', text: 'rolled 17' }];
+  const md = renderMarkdown(list);
+  assert.ok(md.startsWith('# Scrivener export\n\n2 session(s), 3 spoken line(s), 1 chat message(s), oldest first.\n'));
+  assert.equal(md.match(/^# /gm).length, 1);
+  const council = md.indexOf('## Realm / Council — 2026-09-20 20:00 UTC');
+  const tavern = md.indexOf('## Realm / Tavern — 2026-09-24 20:00 UTC');
+  assert.ok(council > 0 && tavern > council);
+  assert.ok(md.indexOf('**[00:00:01] Gig:** Order.') < md.indexOf('**[00:00:05] Ferren:**'));
+  const chatAt = md.indexOf('💬 **[00:00:00] Ferren in #dice:** rolled 17');
+  assert.ok(chatAt > md.indexOf('**[00:00:00] Gig:** Line one', tavern));
+});
+
+test('audioFiles picks the mix, else a lone speaker track, else nothing', async () => {
+  const { dir } = fixture();
+  mkdirSync(join(dir, 'older_Council', 'tracks'));
+  writeFileSync(join(dir, 'older_Council', 'tracks', 'Gig.ogg'), 'a');
+  writeFileSync(join(dir, 'older_Council', 'tracks', 'Ferren.ogg'), 'bb');
+  writeFileSync(join(dir, 'older_Council', 'tracks', 'mix.ogg'), 'ccc');
+  mkdirSync(join(dir, 'newer_Tavern', 'tracks'));
+  writeFileSync(join(dir, 'newer_Tavern', 'tracks', 'Gig.ogg'), 'dddd');
+  const list = await listSessions(dir, 'g1');
+  const found = await audioFiles(dir, list);
+  assert.deepEqual(found.map((f) => [f.name, f.path && f.path.slice(dir.length), f.size]), [
+    ['older_Council.ogg', '/older_Council/tracks/mix.ogg', 3],
+    ['newer_Tavern.ogg', '/newer_Tavern/tracks/Gig.ogg', 4],
+  ]);
+  writeFileSync(join(dir, 'newer_Tavern', 'tracks', 'Ferren.ogg'), 'e'); // two speakers, mix failed
+  const [, none] = await audioFiles(dir, list);
+  assert.equal(none.path, null);
+});
+
+test('planUpload keeps to the size and file-count limits, in order', () => {
+  const f = (name, size) => ({ name, size });
+  const { upload, save } = planUpload([f('a', 6), f('b', 5), f('c', 4), f('d', 1)], 10, 2);
+  assert.deepEqual(upload.map((x) => x.name), ['a', 'c']);
+  assert.deepEqual(save.map((x) => x.name), ['b', 'd']);
 });

@@ -11,7 +11,7 @@ export const HELP = [
   '`/scribe resume`: start capturing again after a pause.',
   '`/scribe stop`: end the recording. A progress message keeps count of the transcription backlog until the transcript is posted here.',
   '`/scribe status`: what is being recorded and whether transcription is keeping up, or how far along a stopped recording\'s transcript is, with a rough time left.',
-  '`/scribe export`: pick past sessions and get their transcripts combined into one JSONL or CSV file.',
+  '`/scribe export`: pick past sessions and get their transcripts combined into one JSONL, CSV or Markdown file, or get their call audio.',
   '`/scribe help`: this message.',
   '`/roll [dice] [for]`: roll dice, like `d20`, `2d6+3`, `4d6kh3` (keep the highest 3) or `2d20kh1+5` (advantage). A roll made during a recording goes into its transcript.',
   '',

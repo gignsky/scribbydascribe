@@ -6,11 +6,11 @@
 //   /scribe resume  capture again after a pause
 //   /scribe stop    finish, write the files, post the transcript here
 //   /scribe status  what is being recorded, or how far a stopped one has got
-//   /scribe export  combine chosen sessions' transcripts into one file
+//   /scribe export  combine chosen sessions' transcripts into one file, or get their audio
 //   /scribe help    list the commands
 //   /roll           roll dice, e.g. `/roll 2d20kh1+5`; kept in any recording
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ActionRowBuilder,
@@ -30,7 +30,18 @@ import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
 import { HELP, describe, describeLast, finishedLine } from './status.js';
 import { roll } from './dice.js';
-import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport } from './export.js';
+import {
+  FORMATS,
+  FORMAT_BLURB,
+  MAX_CHOICES,
+  audioFiles,
+  choiceFor,
+  exportRows,
+  listSessions,
+  planUpload,
+  renderExport,
+  renderMarkdown,
+} from './export.js';
 
 const cfg = loadConfig();
 await mkdir(cfg.dataDir, { recursive: true });
@@ -128,11 +139,11 @@ const command = new SlashCommandBuilder()
   .addSubcommand((s) =>
     s
       .setName('export')
-      .setDescription('Combine chosen sessions into one file for another dataset')
+      .setDescription('Combine chosen sessions into one file, or get their audio')
       .addStringOption((o) =>
         o
           .setName('format')
-          .setDescription('File format (default: jsonl)')
+          .setDescription('jsonl or csv rows, a Markdown transcript, or the call audio (default: jsonl)')
           .addChoices(...FORMATS.map((f) => ({ name: f, value: f }))),
       ),
   )
@@ -158,13 +169,13 @@ async function offerExport(i) {
   const shown = all.slice(0, MAX_CHOICES);
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`scribe-export:${format}`)
-    .setPlaceholder('Sessions to combine')
+    .setPlaceholder(format === 'audio' ? 'Sessions to get the audio of' : 'Sessions to combine')
     .setMinValues(1)
     .setMaxValues(shown.length)
     .addOptions(shown.map(choiceFor));
   return i.reply({
     content:
-      `Pick the sessions to combine into one **${format}** file, one row per spoken line.` +
+      `Pick the sessions to get as ${FORMAT_BLURB[format]}.` +
       (all.length > shown.length ? ` Showing the ${shown.length} most recent of ${all.length}.` : ''),
     components: [new ActionRowBuilder().addComponents(menu)],
     flags: MessageFlags.Ephemeral,
@@ -178,10 +189,19 @@ async function sendExport(i) {
   await i.update({ content: `Building the ${format} export…`, components: [] });
   // Resolve choices against the listing, never against the raw values.
   const chosen = (await listSessions(cfg.dataDir, i.guildId)).filter((s) => i.values.includes(s.key));
-  const rows = exportRows(chosen);
-  const body = Buffer.from(renderExport(rows, format));
-  const name = `scrivener-export_${new Date().toISOString().replace(/[:]/g, '-').replace(/\..+$/, '')}.${format}`;
-  const summary = `${chosen.length} session(s), ${rows.length} line(s)`;
+  if (format === 'audio') return sendAudio(i, chosen);
+  const stamp = new Date().toISOString().replace(/[:]/g, '-').replace(/\..+$/, '');
+  const name = `scrivener-export_${stamp}.${format}`;
+  let body, summary;
+  if (format === 'md') {
+    body = Buffer.from(renderMarkdown(chosen));
+    const lines = chosen.reduce((n, s) => n + (s.lines ?? []).length + (s.chat ?? []).length, 0);
+    summary = `${chosen.length} session(s), ${lines} line(s)`;
+  } else {
+    const rows = exportRows(chosen);
+    body = Buffer.from(renderExport(rows, format));
+    summary = `${chosen.length} session(s), ${rows.length} line(s)`;
+  }
   if (body.length <= MAX_UPLOAD) {
     return i.editReply({ content: `📦 Export ready: ${summary}.`, files: [new AttachmentBuilder(body, { name })] });
   }
@@ -189,6 +209,35 @@ async function sendExport(i) {
   await writeFile(join(cfg.exportDir, name), body);
   return i.editReply({
     content: `📦 Export ready: ${summary}. It is ${(body.length / 1048576).toFixed(1)} MiB, too big to upload here, so it was saved on the host as \`${name}\` in the exports folder.`,
+  });
+}
+
+const mib = (bytes) => `${(bytes / 1048576).toFixed(1)} MiB`;
+
+/**
+ * The audio choice: each session's mixed-down call audio. As many as fit go
+ * up with the reply; the rest are copied to the exports folder on the host.
+ */
+async function sendAudio(i, chosen) {
+  const found = await audioFiles(cfg.dataDir, chosen);
+  const missing = found.filter((f) => !f.path);
+  const { upload, save } = planUpload(found.filter((f) => f.path), MAX_UPLOAD);
+  if (save.length) {
+    await mkdir(cfg.exportDir, { recursive: true });
+    for (const f of save) await copyFile(f.path, join(cfg.exportDir, f.name));
+  }
+  const notes = [`🔊 Audio ready for ${found.length - missing.length} of ${chosen.length} session(s).`];
+  if (save.length) {
+    notes.push(
+      `Too big to upload here all at once, so saved on the host in the exports folder: ` +
+        save.map((f) => `\`${f.name}\` (${mib(f.size)})`).join(', ') + '.',
+    );
+  }
+  if (missing.length) notes.push(`No audio for: ${missing.map((f) => `\`${f.session.folder}\``).join(', ')}.`);
+  notes.push('Per-speaker tracks, aligned to the session start, are in each session\'s `tracks/` folder on the host.');
+  return i.editReply({
+    content: notes.join('\n'),
+    files: upload.map((f) => new AttachmentBuilder(f.path, { name: f.name })),
   });
 }
 

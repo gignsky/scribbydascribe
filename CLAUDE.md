@@ -10,7 +10,7 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 | `src/intents.js` | which gateway intents to ask for, and the Message Content grant check that keeps a refusal from being fatal |
 | `src/dice.js` | dice notation for `/roll`: parse, roll, and show the working |
 | `src/status.js` | the help text and the `/scribe status` wording, as pure functions of a session snapshot |
-| `src/export.js` | lists finished sessions and renders the combined JSONL/CSV export |
+| `src/export.js` | lists finished sessions and renders the combined JSONL/CSV/Markdown export, or picks each session's audio |
 | `src/session.js` | one recording: voice receive, a clip per speaker's turn, pause/resume, text chat, the transcription queue and its progress, final outputs, and suspend/restore across a restart (`resume.json`) |
 | `src/audio.js` | PCM helpers and `ClipBuilder` (keeps clips true to the wall clock) |
 | `src/transcriber.js` | drives the Python worker over JSON lines on stdin/stdout, and measures its speed for the status time estimates |
@@ -23,7 +23,7 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 
 ```
 nix develop -c npm ci
-nix develop -c npm test          # 45 tests, incl. an Opus -> Whisper speech round trip
+nix develop -c npm test          # 48 tests, incl. an Opus -> Whisper speech round trip
 nix build .#scrivener            # the program; runs the unit tests in checkPhase
 nix build                        # the OCI image tarball
 ```

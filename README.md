@@ -13,7 +13,7 @@ Discord sends a bot each person's audio as a separate stream, so speakers never 
 | `/scribe resume` | Starts capturing again, and says so in the channel. |
 | `/scribe stop` | Stops recording, finishes transcribing, and posts `transcript.md` and `transcript.srt` in the channel where recording started. Until then, its reply is a progress message that updates itself every 10 seconds: the step it is on, a progress bar and a rough time left. When the transcript is out it reads ✅. A recording that stops by itself (everyone left, the connection dropped, the container stopped) posts the same progress message in the channel where it was started. |
 | `/scribe status` | While recording: how long, the speakers so far, the line count, and whether transcription is keeping up. If it is behind, it shows how much audio is waiting and roughly how long catching up will take. After a stop, until the transcript is posted: which step it is on (transcribing, writing files, building tracks, posting), with a progress bar, clips done and a rough time left. Once it is posted: when the last recording finished and where its transcript went. It also says if the speech model is still loading. Only you can see the reply. |
-| `/scribe export [format]` | Offers this server's finished sessions (the 25 most recent) in a menu. Pick any number and you get one file with every spoken line from all of them: `jsonl` (default) or `csv`. Only you see the menu and the file. |
+| `/scribe export [format]` | Offers this server's finished sessions (the 25 most recent) in a menu. Pick any number and you get them combined into one file: `jsonl` (default) or `csv` rows for another dataset, or `md` for one readable transcript with speech and chat together. `audio` instead gets each chosen session's call audio (see below). Only you see the menu and the files. |
 | `/scribe help` | Lists the commands. Only you can see the reply. |
 | `/roll [dice] [for]` | Rolls dice in the open and shows the working, e.g. `@Ferren 🎲 rolled \`2d20kh1 + 5\` for stealth: [~~4~~, 17] + 5 = **22**`. Takes `NdM` terms joined by `+`/`-`, plain numbers, `d%` for d100, and `khN`/`klN` to keep the highest or lowest N dice (`4d6kh3`, `2d20kh1` for advantage, `2d20kl1` for disadvantage). With no dice given it rolls a `d20`. Up to 100 dice of up to 1000 sides per term. A roll made while the server is being recorded goes into the transcript as a chat line credited to whoever rolled, even when text chat is not being recorded. |
 
@@ -57,6 +57,10 @@ Each row of an export is one spoken line, in time order across all the chosen se
 | `text` | What was said or posted; chat attachments are appended as URLs |
 
 JSONL has one JSON object per line. CSV has a header row and uses CRLF line endings, with RFC 4180 quoting. Discord caps a bot's upload at 10 MiB. A larger export is saved on the host in `/var/lib/scrivener/exports/` (`SCRIVENER_EXPORT_DIR` in the container) instead, and the reply names the file.
+
+An `md` export is the chosen sessions' `transcript.md`s one after another, oldest first, under one heading: each session's speech, chat (💬) and pauses in time order, exactly as in its own transcript.
+
+An `audio` export is one Ogg Opus file per session, named after its folder: the call mixed down (`tracks/mix.ogg`), or the one speaker's track when only one person spoke. As many as fit in 10 MiB (and 10 files) come with the reply. The rest are copied to the exports folder on the host, and the reply names them. At 64 kbit/s that is roughly 20 minutes of call per upload, so a long session will usually land on the host. A session whose tracks could not be built is listed as having no audio. The per-speaker tracks stay in each session's `tracks/` folder.
 
 ## What a session leaves behind
 
