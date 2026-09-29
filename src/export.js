@@ -1,11 +1,12 @@
 // /scribe export: combine the transcripts of chosen sessions into one file,
-// one row per spoken line or chat message, for loading into another dataset.
+// one row per spoken line or chat message, for loading into another dataset;
+// or one readable Markdown transcript of them all; or their call audio.
 
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { toMarkdown } from './output.js';
 
-export const FORMATS = ['jsonl', 'csv', 'md'];
+export const FORMATS = ['jsonl', 'csv', 'md', 'audio'];
 /** Discord allows at most 25 options in one select menu. */
 export const MAX_CHOICES = 25;
 
@@ -102,6 +103,48 @@ export function renderMarkdown(sessions) {
   const index = ordered.map((s) => `- ${s.channelName} — ${utc(s.startedAtMs)} UTC`).join('\n');
   const header = `# Combined transcript — ${ordered.length} session(s)\n\n${index}\n\n---\n\n`;
   return header + ordered.map((s) => toMarkdown(s, s.lines ?? [], s.chat ?? [])).join('\n---\n\n');
+}
+
+/**
+ * The audio of each chosen session: tracks/mix.ogg, or the one speaker's track
+ * when only one person spoke (no mix is made then). Sessions without audio,
+ * say because the tracks could not be built, come back with `path: null`.
+ * @returns {Promise<Array<{session:object, path:string|null, name:string, size:number}>>}
+ */
+export async function audioFiles(sessionsDir, sessions) {
+  const out = [];
+  for (const s of [...sessions].sort((a, b) => a.startedAtMs - b.startedAtMs)) {
+    const dir = join(sessionsDir, s.folder, 'tracks');
+    let names = [];
+    try {
+      names = (await readdir(dir)).filter((n) => n.endsWith('.ogg'));
+    } catch {
+      // no tracks folder
+    }
+    const pick = names.includes('mix.ogg') ? 'mix.ogg' : names.length === 1 ? names[0] : null;
+    const path = pick && join(dir, pick);
+    out.push({ session: s, path, name: `${s.folder}.ogg`, size: path ? (await stat(path)).size : 0 });
+  }
+  return out;
+}
+
+/**
+ * Splits files into those that fit in one Discord reply (at most `maxFiles`,
+ * `maxBytes` in all, in order) and the rest, to be saved on the host.
+ */
+export function planUpload(files, maxBytes, maxFiles = 10) {
+  const upload = [];
+  const save = [];
+  let used = 0;
+  for (const f of files) {
+    if (upload.length < maxFiles && used + f.size <= maxBytes) {
+      upload.push(f);
+      used += f.size;
+    } else {
+      save.push(f);
+    }
+  }
+  return { upload, save };
 }
 
 function utc(ms) {

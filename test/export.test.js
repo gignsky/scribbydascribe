@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FORMATS, choiceFor, exportRows, listSessions, renderExport, renderMarkdown, COLUMNS } from '../src/export.js';
+import { FORMATS, audioFiles, choiceFor, exportRows, listSessions, planUpload, renderExport, renderMarkdown, COLUMNS } from '../src/export.js';
 import { toJson } from '../src/output.js';
 
 function session(dir, folder, meta, lines) {
@@ -93,8 +93,8 @@ test('exportRows includes chat messages as kind=chat rows', () => {
   assert.match(choiceFor({ ...s, durationMs: 1, key: 'k' }).description, /1 chat message\(s\)/);
 });
 
-test('FORMATS offers md alongside jsonl/csv', () => {
-  assert.deepEqual(FORMATS, ['jsonl', 'csv', 'md']);
+test('FORMATS offers md and audio alongside jsonl/csv', () => {
+  assert.deepEqual(FORMATS, ['jsonl', 'csv', 'md', 'audio']);
 });
 
 test('renderMarkdown lays out each session like its own transcript.md, oldest first', async () => {
@@ -114,4 +114,30 @@ test('renderMarkdown lays out each session like its own transcript.md, oldest fi
 
 test('renderMarkdown on no sessions says so plainly', () => {
   assert.equal(renderMarkdown([]), '_No sessions chosen._\n');
+});
+
+test('audioFiles picks the mix, else a lone speaker track, else nothing', async () => {
+  const { dir } = fixture();
+  mkdirSync(join(dir, 'older_Council', 'tracks'));
+  writeFileSync(join(dir, 'older_Council', 'tracks', 'Gig.ogg'), 'a');
+  writeFileSync(join(dir, 'older_Council', 'tracks', 'Ferren.ogg'), 'bb');
+  writeFileSync(join(dir, 'older_Council', 'tracks', 'mix.ogg'), 'ccc');
+  mkdirSync(join(dir, 'newer_Tavern', 'tracks'));
+  writeFileSync(join(dir, 'newer_Tavern', 'tracks', 'Gig.ogg'), 'dddd');
+  const list = await listSessions(dir, 'g1');
+  const found = await audioFiles(dir, list);
+  assert.deepEqual(found.map((f) => [f.name, f.path && f.path.slice(dir.length), f.size]), [
+    ['older_Council.ogg', '/older_Council/tracks/mix.ogg', 3],
+    ['newer_Tavern.ogg', '/newer_Tavern/tracks/Gig.ogg', 4],
+  ]);
+  writeFileSync(join(dir, 'newer_Tavern', 'tracks', 'Ferren.ogg'), 'e'); // two speakers, mix failed
+  const [, none] = await audioFiles(dir, list);
+  assert.equal(none.path, null);
+});
+
+test('planUpload keeps to the size and file-count limits, in order', () => {
+  const f = (name, size) => ({ name, size });
+  const { upload, save } = planUpload([f('a', 6), f('b', 5), f('c', 4), f('d', 1)], 10, 2);
+  assert.deepEqual(upload.map((x) => x.name), ['a', 'c']);
+  assert.deepEqual(save.map((x) => x.name), ['b', 'd']);
 });
