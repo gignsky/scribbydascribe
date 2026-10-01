@@ -1,5 +1,5 @@
 {
-  description = "scrivener: Discord voice-call recorder and per-speaker transcriber";
+  description = "scribbydascribe: Discord voice-call recorder and per-speaker transcriber";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
@@ -11,9 +11,9 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
-        scrivener = pkgs.callPackage ./nix/package.nix { };
+        scribbydascribe = pkgs.callPackage ./nix/package.nix { };
         # The OCI image is the default, matching the fleet's container payloads.
-        image = pkgs.callPackage ./nix/image.nix { inherit scrivener; };
+        image = pkgs.callPackage ./nix/image.nix { inherit scribbydascribe; };
         default = image;
       });
 
@@ -23,7 +23,7 @@
             pkgs.nodejs_22
             pkgs.ffmpeg-headless
             pkgs.espeak-ng
-            self.packages.${pkgs.system}.scrivener.passthru.python
+            self.packages.${pkgs.system}.scribbydascribe.passthru.python
           ];
         };
       });

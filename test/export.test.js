@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { choiceFor, exportRows, listSessions, renderExport, COLUMNS } from '../src/export.js';
+import { FORMATS, choiceFor, exportRows, listSessions, renderExport, renderMarkdown, COLUMNS } from '../src/export.js';
 import { toJson } from '../src/output.js';
 
 function session(dir, folder, meta, lines) {
@@ -17,7 +17,7 @@ const meta = (guildId, channelId, channelName, startedAtMs) => ({
 });
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'scrivener-export-'));
+  const dir = mkdtempSync(join(tmpdir(), 'scribbydascribe-export-'));
   const t0 = Date.UTC(2026, 8, 20, 20, 0, 0);
   const t1 = Date.UTC(2026, 8, 24, 20, 0, 0);
   session(dir, 'older_Council', meta('g1', 'c1', 'Council', t0), [
@@ -91,4 +91,27 @@ test('exportRows includes chat messages as kind=chat rows', () => {
     ['chat', 'dice', 'Ferren', 1500, '17 https://cdn/x.png'],
   ]);
   assert.match(choiceFor({ ...s, durationMs: 1, key: 'k' }).description, /1 chat message\(s\)/);
+});
+
+test('FORMATS offers md alongside jsonl/csv', () => {
+  assert.deepEqual(FORMATS, ['jsonl', 'csv', 'md']);
+});
+
+test('renderMarkdown lays out each session like its own transcript.md, oldest first', async () => {
+  const { dir } = fixture();
+  // listSessions is newest-first; renderMarkdown must not depend on that order.
+  const sessions = await listSessions(dir, 'g1');
+  assert.equal(sessions[0].folder, 'newer_Tavern');
+  const md = renderMarkdown(sessions);
+
+  assert.match(md, /# Combined transcript — 2 session\(s\)/);
+  const council = md.indexOf('Council');
+  const tavern = md.indexOf('Tavern');
+  assert.ok(council > 0 && tavern > council, 'older session comes first in the body');
+  assert.match(md, /\*\*\[00:00:01\] Gig:\*\* Order\./);
+  assert.match(md, /\*\*\[00:00:00\] Gig:\*\* Line one\nline two/);
+});
+
+test('renderMarkdown on no sessions says so plainly', () => {
+  assert.equal(renderMarkdown([]), '_No sessions chosen._\n');
 });

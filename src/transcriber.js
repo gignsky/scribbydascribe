@@ -104,16 +104,35 @@ export class Transcriber extends EventEmitter {
   /**
    * @param {string} wavPath
    * @param {number} [audioMs] the clip's length, to measure throughput
-   * @returns {Promise<{segments: {start:number,end:number,text:string}[], language?: string}>}
+   * @param {{embed?: boolean}} [opts] embed: true also asks for a voice
+   *   embedding, for /scribe transpose to tell apart a shared mic's speakers
+   * @returns {Promise<{segments: {start:number,end:number,text:string}[], language?: string, embedding?: number[]}>}
    */
-  transcribe(wavPath, audioMs = 0) {
+  transcribe(wavPath, audioMs = 0, { embed = false } = {}) {
     if (!this.#proc || this.#proc.exitCode !== null) {
       return Promise.reject(new Error('transcription worker is not running'));
     }
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject, audioMs, sentAt: Date.now() });
-      this.#proc.stdin.write(JSON.stringify({ id, path: wavPath }) + '\n');
+      this.#proc.stdin.write(JSON.stringify({ id, path: wavPath, embed }) + '\n');
+    });
+  }
+
+  /**
+   * A voice embedding for a clip already transcribed, without asking Whisper
+   * to do its work again. For retroactively splitting a past recording with
+   * /scribe transpose.
+   * @returns {Promise<{embedding?: number[]}>}
+   */
+  embedOnly(wavPath) {
+    if (!this.#proc || this.#proc.exitCode !== null) {
+      return Promise.reject(new Error('transcription worker is not running'));
+    }
+    const id = this.#nextId++;
+    return new Promise((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject, audioMs: 0, sentAt: Date.now() });
+      this.#proc.stdin.write(JSON.stringify({ id, path: wavPath, embedOnly: true }) + '\n');
     });
   }
 

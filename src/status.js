@@ -4,14 +4,15 @@
 import { clock } from './output.js';
 
 export const HELP = [
-  '**scrivener** records this server\'s voice calls and writes a transcript labelled by speaker.',
+  '**scribbydascribe** records this server\'s voice calls and writes a transcript labelled by speaker.',
   '',
   '`/scribe start`: join your voice channel and start recording, along with messages posted in this server\'s text channels. Everyone in the call is told.',
   '`/scribe pause`: stop capturing but stay in the call. Nothing said or posted while paused is saved.',
   '`/scribe resume`: start capturing again after a pause.',
   '`/scribe stop`: end the recording. A progress message keeps count of the transcription backlog until the transcript is posted here.',
   '`/scribe status`: what is being recorded and whether transcription is keeping up, or how far along a stopped recording\'s transcript is, with a rough time left.',
-  '`/scribe export`: pick past sessions and get their transcripts combined into one JSONL or CSV file.',
+  '`/scribe export`: pick past sessions and get their transcripts combined into one JSONL, CSV or Markdown file.',
+  '`/scribe transpose @user [names]`: split that account\'s shared mic into named party members, best-effort by voice (e.g. `Alice, Bob`). Leave names blank to stop splitting them. Offers to re-split a past recording of theirs too.',
   '`/scribe help`: this message.',
   '`/roll [dice] [for]`: roll dice, like `d20`, `2d6+3`, `4d6kh3` (keep the highest 3) or `2d20kh1+5` (advantage). A roll made during a recording goes into its transcript.',
   '',

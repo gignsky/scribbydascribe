@@ -1,11 +1,11 @@
 {
-  "name": "scrivener",
-  "version": "0.1.0",
+  "name": "scribbydascribe",
+  "version": "0.1.1",
   "description": "Discord bot that records a voice call and writes a per-speaker, timestamped transcript",
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "scrivener": "src/index.js"
+    "scribbydascribe": "src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",

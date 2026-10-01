@@ -46,7 +46,7 @@ const ffprobeSeconds = (f) =>
   Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', f]).toString());
 
 test('buildTracks writes aligned per-speaker tracks and a mix', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'scrivener-'));
+  const dir = mkdtempSync(join(tmpdir(), 'scribbydascribe-'));
   mkdirSync(join(dir, 'clips'));
   mkdirSync(join(dir, 'tracks'));
   const tone = (ms) => {

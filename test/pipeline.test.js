@@ -17,7 +17,7 @@ import { buildLines, toMarkdown } from '../src/output.js';
 import { loadConfig } from '../src/config.js';
 
 const have = (cmd, args) => spawnSync(cmd, args).status === 0;
-const ready = !process.env.SCRIVENER_SKIP_E2E && have('espeak-ng', ['--version']) && have('python3', ['-c', 'import faster_whisper']);
+const ready = !process.env.SCRIBBYDASCRIBE_SKIP_E2E && have('espeak-ng', ['--version']) && have('python3', ['-c', 'import faster_whisper']);
 
 function speak(text, voice) {
   // espeak -> 48 kHz stereo s16le, the format Discord clients encode from.
@@ -53,7 +53,7 @@ async function receive(packets, startMs) {
 test('speech survives Opus → clip → whisper → transcript', { skip: !ready && 'espeak-ng / faster_whisper missing', timeout: 600_000 }, async () => {
   process.env.DISCORD_TOKEN ??= 'test';
   const cfg = { ...loadConfig(), whisperModel: process.env.WHISPER_MODEL || 'small' };
-  const dir = mkdtempSync(join(tmpdir(), 'scrivener-e2e-'));
+  const dir = mkdtempSync(join(tmpdir(), 'scribbydascribe-e2e-'));
   const t = new Transcriber(cfg);
   t.start();
 

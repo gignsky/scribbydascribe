@@ -25,7 +25,7 @@ const base = {
 };
 
 test('help lists every subcommand', () => {
-  for (const sub of ['start', 'pause', 'resume', 'stop', 'status', 'export', 'help']) assert.match(HELP, new RegExp(`/scribe ${sub}`));
+  for (const sub of ['start', 'pause', 'resume', 'stop', 'status', 'export', 'transpose', 'help']) assert.match(HELP, new RegExp(`/scribe ${sub}`));
 });
 
 test('bar fills in proportion and clamps', () => {
@@ -119,7 +119,7 @@ test('markdown marks pauses in the flow of the transcript', () => {
 });
 
 test('a session pauses, resumes and reports each finishing phase', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'scrivener-session-'));
+  const dir = mkdtempSync(join(tmpdir(), 'scribbydascribe-session-'));
   const guild = { id: 'g', name: 'Realm', members: { cache: new Map() } };
   const s = new RecordingSession({
     cfg: { ffmpeg: 'ffmpeg', minClipMs: 400, silenceMs: 800, maxClipMs: 30_000 },
@@ -175,7 +175,7 @@ function fakeMessage({ id, at, channelId = 't1', channel = 'general', author = '
 }
 
 test('a session keeps chat posted while recording, not before, while paused or after', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'scrivener-chat-'));
+  const dir = mkdtempSync(join(tmpdir(), 'scribbydascribe-chat-'));
   const guild = { id: 'g', name: 'Realm', members: { cache: new Map() } };
   const s = new RecordingSession({
     cfg: { ffmpeg: 'ffmpeg', minClipMs: 400, silenceMs: 800, maxClipMs: 30_000 },
@@ -226,7 +226,7 @@ test('markdown interleaves chat with speech by time', () => {
 });
 
 test('a /roll made while recording goes in the chat, credited to the roller', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'scrivener-roll-'));
+  const dir = mkdtempSync(join(tmpdir(), 'scribbydascribe-roll-'));
   const guild = { id: 'g', name: 'Realm', members: { cache: new Map() } };
   const s = new RecordingSession({
     cfg: { ffmpeg: 'ffmpeg', minClipMs: 400, silenceMs: 800, maxClipMs: 30_000 },
