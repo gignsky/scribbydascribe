@@ -3,8 +3,9 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { toMarkdown } from './output.js';
 
-export const FORMATS = ['jsonl', 'csv'];
+export const FORMATS = ['jsonl', 'csv', 'md'];
 /** Discord allows at most 25 options in one select menu. */
 export const MAX_CHOICES = 25;
 
@@ -87,6 +88,20 @@ export function renderExport(rows, format) {
     return [COLUMNS.join(','), ...rows.map((r) => COLUMNS.map((c) => csvField(r[c])).join(','))].join('\r\n') + '\r\n';
   }
   return rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
+}
+
+/**
+ * The chosen sessions as one markdown document, each laid out like its own
+ * transcript.md, oldest first, separated by a rule. Unlike jsonl/csv this
+ * keeps each session's own speaker labels and timestamps, since sessions
+ * rarely share a timeline worth merging into.
+ */
+export function renderMarkdown(sessions) {
+  const ordered = [...sessions].sort((a, b) => a.startedAtMs - b.startedAtMs);
+  if (!ordered.length) return '_No sessions chosen._\n';
+  const index = ordered.map((s) => `- ${s.channelName} — ${utc(s.startedAtMs)} UTC`).join('\n');
+  const header = `# Combined transcript — ${ordered.length} session(s)\n\n${index}\n\n---\n\n`;
+  return header + ordered.map((s) => toMarkdown(s, s.lines ?? [], s.chat ?? [])).join('\n---\n\n');
 }
 
 function utc(ms) {

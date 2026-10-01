@@ -2,16 +2,16 @@
   dockerTools,
   cacert,
   tzdata,
-  scrivener,
+  scribbydascribe,
 }:
 # OCI image for spacedock's podman: `podman load < result`, tagged
-# scrivener:latest. Sessions and the downloaded Whisper model live on the
+# scribbydascribe:latest. Sessions and the downloaded Whisper model live on the
 # /data volume so they survive image upgrades.
 dockerTools.buildLayeredImage {
-  name = "scrivener";
+  name = "scribbydascribe";
   tag = "latest";
   contents = [
-    scrivener
+    scribbydascribe
     cacert
     tzdata
   ];
@@ -20,10 +20,10 @@ dockerTools.buildLayeredImage {
     chmod 1777 tmp
   '';
   config = {
-    Entrypoint = [ "${scrivener}/bin/scrivener" ];
+    Entrypoint = [ "${scribbydascribe}/bin/scribbydascribe" ];
     Env = [
       "SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt"
-      "SCRIVENER_DATA_DIR=/data/sessions"
+      "SCRIBBYDASCRIBE_DATA_DIR=/data/sessions"
       "HF_HOME=/data/models"
       "TZ=America/New_York"
     ];

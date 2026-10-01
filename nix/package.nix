@@ -9,12 +9,15 @@
   stdenv,
 }:
 let
-  python = python3.withPackages (ps: [ ps.faster-whisper ]);
+  # speechbrain (a speaker-embedding model, for /scribe transpose's party
+  # mode) is loaded lazily and only on the first clip that needs it, so a
+  # server that never splits a mic never pays for it at startup.
+  python = python3.withPackages (ps: [ ps.faster-whisper ps.speechbrain ]);
   root = ../.;
 in
 buildNpmPackage {
-  pname = "scrivener";
-  version = "0.1.0";
+  pname = "scribbydascribe";
+  version = "0.1.1";
 
   src = lib.fileset.toSource {
     inherit root;
@@ -45,19 +48,19 @@ buildNpmPackage {
   nativeCheckInputs = [ ffmpeg-headless ];
   checkPhase = ''
     runHook preCheck
-    export SCRIVENER_SKIP_E2E=1
+    export SCRIBBYDASCRIBE_SKIP_E2E=1
     node --test test/*.test.js
     runHook postCheck
   '';
 
   installPhase = ''
     runHook preInstall
-    mkdir -p $out/lib/scrivener $out/bin
-    cp -r package.json src worker node_modules $out/lib/scrivener/
-    makeWrapper ${nodejs_22}/bin/node $out/bin/scrivener \
-      --add-flags $out/lib/scrivener/src/index.js \
-      --set-default SCRIVENER_PYTHON ${python}/bin/python3 \
-      --set-default SCRIVENER_FFMPEG ${ffmpeg-headless}/bin/ffmpeg
+    mkdir -p $out/lib/scribbydascribe $out/bin
+    cp -r package.json src worker node_modules $out/lib/scribbydascribe/
+    makeWrapper ${nodejs_22}/bin/node $out/bin/scribbydascribe \
+      --add-flags $out/lib/scribbydascribe/src/index.js \
+      --set-default SCRIBBYDASCRIBE_PYTHON ${python}/bin/python3 \
+      --set-default SCRIBBYDASCRIBE_FFMPEG ${ffmpeg-headless}/bin/ffmpeg
     runHook postInstall
   '';
 
@@ -65,7 +68,7 @@ buildNpmPackage {
 
   meta = {
     description = "Discord bot that records a voice call and writes a per-speaker, timestamped transcript";
-    mainProgram = "scrivener";
+    mainProgram = "scribbydascribe";
     platforms = lib.platforms.linux;
   };
 }

@@ -1,4 +1,4 @@
-# CLAUDE.md: scrivener
+# CLAUDE.md: scribbydascribe
 
 A Discord bot that records voice calls and writes per-speaker, timestamped transcripts. It ships as an OCI image that runs on the fleet host **spacedock**. The `.dotfiles` repo consumes it as a flake input, the same way it consumes avecmoi.
 
@@ -17,22 +17,22 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 | `src/output.js` | transcript md/srt/json and ffmpeg-built aligned speaker tracks |
 | `worker/transcribe.py` | long-lived faster-whisper process |
 | `nix/package.nix`, `nix/image.nix`, `flake.nix` | the program, the image (`packages.default`) and the dev shell |
-| `deploy/scrivener.nix` | reference copy of the spacedock service payload; the live copy is in `.dotfiles/containers/services/` |
+| `deploy/scribbydascribe.nix` | reference copy of the spacedock service payload; the live copy is in `.dotfiles/containers/services/` |
 
 ## Commands
 
 ```
 nix develop -c npm ci
-nix develop -c npm test          # 45 tests, incl. an Opus -> Whisper speech round trip
-nix build .#scrivener            # the program; runs the unit tests in checkPhase
-nix build                        # the OCI image tarball
+nix develop -c npm test      # 45 tests, incl. an Opus -> Whisper speech round trip
+nix build .#scribbydascribe  # the program; runs the unit tests in checkPhase
+nix build                    # the OCI image tarball
 ```
 
 After changing `package-lock.json`, recompute `npmDepsHash` in `nix/package.nix`: set it to `lib.fakeHash`, build, and copy in the hash from the error.
 
 ## Branches
 
-`master` is the main branch: `.dotfiles` pins the flake input to `github:gignsky/scribbydascribe/master`, so what lands on `master` is what spacedock gets on its next `nix flake update scrivener`. Work on a feature branch and merge into `master` when it is tested.
+`master` is the main branch: `.dotfiles` pins the flake input to `github:gignsky/scribbydascribe/master`, so what lands on `master` is what spacedock gets on its next `nix flake update scribbydascribe`. Work on a feature branch and merge into `master` when it is tested.
 
 ## Rules
 
@@ -40,5 +40,5 @@ After changing `package-lock.json`, recompute `npmDepsHash` in `nix/package.nix`
 - `opusscript` is pinned to `^0.0.8` to satisfy prism-media's peer range. Keep native `@discordjs/opus` out, because it complicates the Nix build.
 - Recording chat needs the privileged Message Content intent. Asking for one Discord has not granted is fatal, not merely refused: the gateway closes with 4014 and the error escapes as an uncaught exception that no catch around `login()` can see. `src/intents.js` therefore checks the application's flags over REST before connecting, and keeps a reactive fallback plus a `process.on('uncaughtException')` net for when the probe cannot tell. Keep all three; voice-only is always better than offline.
 - A container stop is usually an update, so it suspends recordings rather than ending them. Anything a session needs to carry on must be in `resume.json` (`RecordingSession#state`) or in its append-only `events.jsonl`/`chat.jsonl`. A clip whose transcription is cut off by the worker being killed is left for the requeue, never counted as failed.
-- Never commit tokens. The bot token only ever lives in sops (`scrivener-env` in nix-secrets).
+- Never commit tokens. The bot token only ever lives in sops (`scribbydascribe-env` in nix-secrets).
 - Video capture is out of scope for the bot: Discord's bot API can't receive video, and selfbots break Discord's terms.

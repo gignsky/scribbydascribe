@@ -12,6 +12,8 @@ import {
 import prism from 'prism-media';
 import { ClipBuilder, stereoToMono, toWav } from './audio.js';
 import { buildLines, buildTracks, toJson, toMarkdown, toSrt } from './output.js';
+import { SpeakerClusters, rawSpeakerId } from './diarize.js';
+import { getMembers } from './transpose.js';
 
 function stamp(d) {
   return d.toISOString().replace(/[:]/g, '-').replace(/\..+$/, '');
@@ -48,7 +50,7 @@ async function connectVoice(voiceChannel) {
 }
 
 /** A JSON-lines file, skipping a line cut short by a crash. */
-async function readJsonl(file) {
+export async function readJsonl(file) {
   let text;
   try {
     text = await readFile(file, 'utf8');
@@ -97,6 +99,8 @@ export class RecordingSession {
   #transcriber;
   #active = new Map(); // userId -> { opus, decoder, builder }
   #names = new Map(); // userId -> display name
+  #diarizers = new Map(); // userId -> SpeakerClusters, for /scribe transpose's shared mics
+  #diarizing = new Map(); // userId -> Promise<SpeakerClusters|null>, while #diarizerFor is creating one
   #clips = []; // { speakerId, offsetMs, durationMs, file }
   #entries = []; // transcribed clips
   #jobs = new Set(); // in-flight transcriptions
@@ -251,6 +255,31 @@ export class RecordingSession {
     this.#transcribeClip(clip, written);
   }
 
+  /**
+   * The /scribe transpose clustering for a Discord user's shared mic, if one
+   * is declared for them in this guild -- created on first use and kept for
+   * the rest of the session so its clusters keep growing as clips arrive.
+   *
+   * Several of a user's clips can be in flight together (e.g. requeued after
+   * a restart), each calling this before the first lookup resolves; the
+   * in-flight promise itself is cached too, so they share one clusterer
+   * instead of each starting their own from empty.
+   */
+  #diarizerFor(userId) {
+    if (this.#diarizers.has(userId)) return Promise.resolve(this.#diarizers.get(userId));
+    if (this.#diarizing.has(userId)) return this.#diarizing.get(userId);
+    if (!this.#cfg.dataDir) return Promise.resolve(null); // tests, and anywhere transpose makes no sense
+    const promise = (async () => {
+      const names = await getMembers(this.#cfg.dataDir, this.guild.id, userId);
+      if (!names) return null;
+      const d = new SpeakerClusters(names, [], this.#cfg.voiceSplitThreshold);
+      this.#diarizers.set(userId, d);
+      return d;
+    })().finally(() => this.#diarizing.delete(userId));
+    this.#diarizing.set(userId, promise);
+    return promise;
+  }
+
   /** Transcribe one clip once its file is on disk. */
   #transcribeClip(clip, written = Promise.resolve()) {
     const { speakerId, offsetMs, durationMs, file } = clip;
@@ -261,9 +290,18 @@ export class RecordingSession {
         await written;
         if (!transcribe) return;
         const speaker = await this.#name(speakerId);
-        const res = await this.#transcriber.transcribe(join(this.dir, file), durationMs);
+        const diarizer = await this.#diarizerFor(speakerId);
+        const res = await this.#transcriber.transcribe(join(this.dir, file), durationMs, { embed: Boolean(diarizer) });
+        let entrySpeakerId = speakerId;
+        let entrySpeaker = speaker;
+        if (diarizer && res.embedding) {
+          const { name } = diarizer.assign(res.embedding);
+          entrySpeakerId = `${speakerId}:${name}`;
+          entrySpeaker = `${name} (via ${speaker})`;
+          clip.speakerId = entrySpeakerId; // relabel in place for tracks and transcript.json
+        }
         if (!res.segments.length) return;
-        const entry = { offsetMs, speakerId, speaker, segments: res.segments, file };
+        const entry = { offsetMs, speakerId: entrySpeakerId, speaker: entrySpeaker, segments: res.segments, file };
         this.#entries.push(entry);
         // Written as we go, so a crash still leaves a usable record.
         await appendFile(join(this.dir, 'events.jsonl'), JSON.stringify(entry) + '\n');
@@ -455,11 +493,19 @@ export class RecordingSession {
     this.#phase = 'tracks';
     let tracksError = null;
     try {
+      // A party member relabeled by /scribe transpose has a compound
+      // speakerId (`<userId>:<name>`) not in #names; name their track too.
+      const trackSpeakers = new Map(this.#names);
+      for (const c of this.#clips) {
+        if (!trackSpeakers.has(c.speakerId) && c.speakerId !== rawSpeakerId(c.speakerId)) {
+          trackSpeakers.set(c.speakerId, c.speakerId.slice(rawSpeakerId(c.speakerId).length + 1));
+        }
+      }
       await buildTracks({
         ffmpeg: this.#cfg.ffmpeg,
         sessionDir: this.dir,
         clips: this.#clips,
-        speakers: this.#names,
+        speakers: trackSpeakers,
         durationMs: meta.durationMs,
       });
     } catch (err) {
@@ -519,6 +565,7 @@ export class RecordingSession {
       pausedAt: this.pausedAt,
       pauses: this.#pauses.map((p) => ({ ...p })),
       names: Object.fromEntries(this.#names),
+      diarization: Object.fromEntries([...this.#diarizers].map(([userId, d]) => [userId, d.state])),
       clips: this.#clips,
       done: [...this.#done],
       failed: this.#failed,
@@ -544,6 +591,9 @@ export class RecordingSession {
     s.pausedAt = state.pausedAt || 0;
     s.#pauses = state.pauses.map((p) => ({ ...p }));
     s.#names = new Map(Object.entries(state.names ?? {}));
+    s.#diarizers = new Map(
+      Object.entries(state.diarization ?? {}).map(([userId, st]) => [userId, SpeakerClusters.restore(st, s.#cfg.voiceSplitThreshold)]),
+    );
     s.#clips = state.clips.map((c) => ({ ...c }));
     s.#failed = state.failed ?? 0;
 

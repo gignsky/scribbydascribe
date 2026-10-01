@@ -26,7 +26,7 @@ function fakeTranscriber() {
 }
 
 function newSession(o = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'scrivener-restart-'));
+  const dir = mkdtempSync(join(tmpdir(), 'scribbydascribe-restart-'));
   const guild = { id: 'g', name: 'Realm', members: { cache: new Map() } };
   const s = new RecordingSession({
     cfg,

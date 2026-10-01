@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// scrivener: records a Discord voice call and writes a per-speaker transcript.
+// scribbydascribe: records a Discord voice call and writes a per-speaker transcript.
 //
 //   /scribe start   join your voice channel and begin recording
 //   /scribe pause   stop capturing audio, but stay in the call
@@ -7,6 +7,7 @@
 //   /scribe stop    finish, write the files, post the transcript here
 //   /scribe status  what is being recorded, or how far a stopped one has got
 //   /scribe export  combine chosen sessions' transcripts into one file
+//   /scribe transpose  split one Discord user's shared mic into named party members
 //   /scribe help    list the commands
 //   /roll           roll dice, e.g. `/roll 2d20kh1+5`; kept in any recording
 
@@ -30,7 +31,10 @@ import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
 import { HELP, describe, describeLast, finishedLine } from './status.js';
 import { roll } from './dice.js';
-import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport } from './export.js';
+import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport, renderMarkdown } from './export.js';
+import { MAX_PARTY_MEMBERS, clearMembers, parseNames, setMembers } from './transpose.js';
+import { rawSpeakerId } from './diarize.js';
+import { applyTranspose } from './retranspose.js';
 
 const cfg = loadConfig();
 await mkdir(cfg.dataDir, { recursive: true });
@@ -45,7 +49,7 @@ let recordChat = cfg.recordChat;
 
 const HOW_TO_ENABLE_CHAT =
   'Turn on "Message Content Intent" under Bot at https://discord.com/developers/applications and restart, ' +
-  'or set SCRIVENER_RECORD_CHAT=false to stop asking.';
+  'or set SCRIBBYDASCRIBE_RECORD_CHAT=false to stop asking.';
 
 // Asking Discord for a privileged intent it has not granted is fatal, not
 // merely refused: the gateway closes with 4014 and the error surfaces as an
@@ -112,6 +116,9 @@ const finishing = new Map();
 const aloneTimers = new Map();
 /** guildId -> the last finished recording, for `/scribe status` afterwards */
 const lastFinished = new Map();
+/** interaction id -> { guildId, userId, names }, for the "also re-split a past recording?" menu */
+const pendingRetranspose = new Map();
+const RETRANSPOSE_MENU_MS = 10 * 60_000;
 
 // How often a stopped recording's progress message is refreshed.
 const PROGRESS_EVERY_MS = 10_000;
@@ -134,6 +141,17 @@ const command = new SlashCommandBuilder()
           .setName('format')
           .setDescription('File format (default: jsonl)')
           .addChoices(...FORMATS.map((f) => ({ name: f, value: f }))),
+      ),
+  )
+  .addSubcommand((s) =>
+    s
+      .setName('transpose')
+      .setDescription("Split one Discord user's shared mic into named party members, by voice")
+      .addUserOption((o) => o.setName('user').setDescription('The Discord account whose mic several people share').setRequired(true))
+      .addStringOption((o) =>
+        o
+          .setName('names')
+          .setDescription(`Comma-separated party member names, e.g. "Alice, Bob" (blank stops splitting them)`),
       ),
   )
   .addSubcommand((s) => s.setName('help').setDescription('List the /scribe commands'));
@@ -162,10 +180,12 @@ async function offerExport(i) {
     .setMinValues(1)
     .setMaxValues(shown.length)
     .addOptions(shown.map(choiceFor));
+  const blurb =
+    format === 'md'
+      ? `Pick the sessions to combine into one **md** transcript, laid out like a single recording's transcript.md.`
+      : `Pick the sessions to combine into one **${format}** file, one row per spoken line.`;
   return i.reply({
-    content:
-      `Pick the sessions to combine into one **${format}** file, one row per spoken line.` +
-      (all.length > shown.length ? ` Showing the ${shown.length} most recent of ${all.length}.` : ''),
+    content: blurb + (all.length > shown.length ? ` Showing the ${shown.length} most recent of ${all.length}.` : ''),
     components: [new ActionRowBuilder().addComponents(menu)],
     flags: MessageFlags.Ephemeral,
   });
@@ -178,10 +198,11 @@ async function sendExport(i) {
   await i.update({ content: `Building the ${format} export…`, components: [] });
   // Resolve choices against the listing, never against the raw values.
   const chosen = (await listSessions(cfg.dataDir, i.guildId)).filter((s) => i.values.includes(s.key));
-  const rows = exportRows(chosen);
-  const body = Buffer.from(renderExport(rows, format));
-  const name = `scrivener-export_${new Date().toISOString().replace(/[:]/g, '-').replace(/\..+$/, '')}.${format}`;
-  const summary = `${chosen.length} session(s), ${rows.length} line(s)`;
+  const rows = format === 'md' ? null : exportRows(chosen);
+  const body = Buffer.from(format === 'md' ? renderMarkdown(chosen) : renderExport(rows, format));
+  const name = `scribbydascribe-export_${new Date().toISOString().replace(/[:]/g, '-').replace(/\..+$/, '')}.${format}`;
+  const lineCount = rows ? rows.length : chosen.reduce((n, s) => n + (s.lines?.length ?? 0) + (s.chat?.length ?? 0), 0);
+  const summary = `${chosen.length} session(s), ${lineCount} line(s)`;
   if (body.length <= MAX_UPLOAD) {
     return i.editReply({ content: `📦 Export ready: ${summary}.`, files: [new AttachmentBuilder(body, { name })] });
   }
@@ -190,6 +211,76 @@ async function sendExport(i) {
   return i.editReply({
     content: `📦 Export ready: ${summary}. It is ${(body.length / 1048576).toFixed(1)} MiB, too big to upload here, so it was saved on the host as \`${name}\` in the exports folder.`,
   });
+}
+
+/** /scribe transpose: declare (or clear) the party members behind a shared mic. */
+async function transposeUser(i) {
+  const target = i.options.getUser('user', true);
+  const raw = i.options.getString('names');
+
+  if (!raw || !raw.trim()) {
+    const was = await clearMembers(cfg.dataDir, i.guildId, target.id);
+    return i.reply({
+      content: was
+        ? `${target} is no longer split into party members; their mic records as one speaker again, from the next clip on.`
+        : `${target} was not being split into party members.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  let names;
+  try {
+    names = parseNames(raw);
+  } catch (err) {
+    return i.reply({ content: err.message, flags: MessageFlags.Ephemeral });
+  }
+  await setMembers(cfg.dataDir, i.guildId, target.id, names);
+  const notice =
+    `🎭 **${target}**'s mic will be split into ${names.length} party member(s): ${names.join(', ')}. ` +
+    `scribbydascribe does its best to tell them apart by voice, but it is not perfect -- expect some lines under the wrong name, ` +
+    `especially before each voice has said much. This takes effect in the current recording (if any) and every future one, until changed or cleared.`;
+
+  // Offer to re-split a past recording of theirs too, since this only
+  // changes clips from here on. Not every server will have one to offer.
+  const past = (await listSessions(cfg.dataDir, i.guildId)).filter((s) => (s.lines ?? []).some((l) => rawSpeakerId(l.speakerId) === target.id));
+  if (!past.length) return i.reply(notice);
+
+  const token = i.id;
+  pendingRetranspose.set(token, { guildId: i.guildId, userId: target.id, names });
+  setTimeout(() => pendingRetranspose.delete(token), RETRANSPOSE_MENU_MS);
+  const shown = past.slice(0, MAX_CHOICES);
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`scribe-transpose-past:${token}`)
+    .setPlaceholder('Also re-split a past recording (optional)')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(shown.map(choiceFor));
+  return i.reply({
+    content: `${notice}\n\n${target} also spoke in ${past.length} past recording(s) here; pick one to re-split it the same way, or ignore this.`,
+    components: [new ActionRowBuilder().addComponents(menu)],
+  });
+}
+
+/** The "also re-split a past recording" menu choice. */
+async function retransposePast(i) {
+  const token = i.customId.split(':')[1];
+  const pending = pendingRetranspose.get(token);
+  if (!pending) return i.update({ content: 'That request has expired; run `/scribe transpose` again.', components: [] });
+  pendingRetranspose.delete(token);
+
+  await i.update({ content: 'Re-splitting that recording…', components: [] });
+  const chosen = (await listSessions(cfg.dataDir, pending.guildId)).find((s) => s.key === i.values[0]);
+  if (!chosen) return i.editReply('That session is no longer available.');
+  try {
+    const res = await applyTranspose({ cfg, transcriber, sessionDir: join(cfg.dataDir, chosen.folder), userId: pending.userId, names: pending.names });
+    return i.editReply(
+      `🎭 Re-split **${chosen.channelName}**: ${res.relabeled} clip(s) sorted into ${res.names.length} name(s) (${res.names.join(', ')}). ` +
+        `${res.lines} line(s) in the updated transcript.`,
+    );
+  } catch (err) {
+    console.error('[bot] retroactive transpose failed:', err);
+    return i.editReply(`Could not re-split that recording: ${err.message}`);
+  }
 }
 
 /** /roll: roll in public, and into this server's recording if there is one. */
@@ -292,7 +383,7 @@ async function resumeOne(c, state) {
   sessions.set(guild.id, session);
   console.log(`[bot] resumed recording ${name} after ${down} down`);
   const notice = session.pausedAt
-    ? `⏸️ **scrivener is back** after a restart (${down}). The recording of ${name} is still paused; \`/scribe resume\` continues.`
+    ? `⏸️ **scribbydascribe is back** after a restart (${down}). The recording of ${name} is still paused; \`/scribe resume\` continues.`
     : `🔴 **Recording of ${name} resumed** after a restart. The ${down} the bot was down is marked as a gap in the transcript. ` +
       (recordChat ? 'Everything said in the channel and posted in the server is being saved again.' : 'Everything said in the channel is being saved again.');
   for (const ch of new Set([textChannel, voiceChannel.isTextBased() ? voiceChannel : null])) {
@@ -411,12 +502,19 @@ async function onInteraction(i) {
       return i.editReply({ content: `Export failed: ${err.message}`, components: [] }).catch(() => {});
     });
   }
+  if (i.isStringSelectMenu() && i.customId.startsWith('scribe-transpose-past:') && i.inGuild()) {
+    return retransposePast(i).catch((err) => {
+      console.error('[bot] retroactive transpose failed:', err);
+      return i.editReply({ content: `Could not re-split that recording: ${err.message}`, components: [] }).catch(() => {});
+    });
+  }
   if (i.isChatInputCommand() && i.commandName === 'roll' && i.inGuild()) return rollDice(i);
   if (!i.isChatInputCommand() || i.commandName !== 'scribe' || !i.inGuild()) return;
   const sub = i.options.getSubcommand();
   const current = sessions.get(i.guildId);
 
   if (sub === 'export') return offerExport(i);
+  if (sub === 'transpose') return transposeUser(i);
 
   if (sub === 'help') {
     return i.reply({ content: HELP, flags: MessageFlags.Ephemeral });
@@ -573,7 +671,7 @@ async function shutdown(signal) {
         console.log(`[bot] suspended ${s.dir}`);
         if (s.stopping) return; // its progress message says so
         const notice =
-          `⏸️ **scrivener is restarting.** The recording of ${s.voiceChannel.name} is on hold and carries on when the bot is back, usually within a minute or two. ` +
+          `⏸️ **scribbydascribe is restarting.** The recording of ${s.voiceChannel.name} is on hold and carries on when the bot is back, usually within a minute or two. ` +
           `If it is not back within ${Math.round(cfg.resumeWindowMs / 60_000)} minutes, the recording is finished as it stands now instead.`;
         await s.textChannel?.send(notice).catch(() => {});
       }),
