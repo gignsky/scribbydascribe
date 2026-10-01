@@ -31,7 +31,7 @@ buildNpmPackage {
   };
 
   nodejs = nodejs_22;
-  npmDepsHash = "sha256-BNVVqERSfoPW28+DptW5vZSlh/XFqR8bfFMQNf8hOC4=";
+  npmDepsHash = "sha256-g6jQ0Jg69NY6LOh9U5wv8BoNDx5lNGoA2BcrvaPzzV8=";
   dontNpmBuild = true;
 
   # @snazzah/davey (Discord's DAVE end-to-end encryption) ships a prebuilt
