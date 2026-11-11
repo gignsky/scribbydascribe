@@ -12,6 +12,7 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 | `src/status.js` | the help text and the `/scribe status` wording, as pure functions of a session snapshot |
 | `src/export.js` | lists finished sessions and renders the combined JSONL/CSV export |
 | `src/session.js` | one recording: voice receive, a clip per speaker's turn, pause/resume, text chat, the transcription queue and its progress, final outputs, and suspend/restore across a restart (`resume.json`) |
+| `src/cli.js`, `src/live.js` | `scribby-live`: the no-Discord CLI. Listens to a mic/monitor (parecord or pw-record) or a raw PCM file/stdin, cuts it into clips at pauses (`Endpointer`), and appends one `[HH:MM:SS] label: text` entry per utterance (Markdown by default) to a file that readers can tail while it grows |
 | `src/audio.js` | PCM helpers and `ClipBuilder` (keeps clips true to the wall clock) |
 | `src/transcriber.js` | drives the Python worker over JSON lines on stdin/stdout, and measures its speed for the status time estimates |
 | `src/output.js` | transcript md/srt/json and ffmpeg-built aligned speaker tracks |
@@ -23,7 +24,7 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 
 ```
 nix develop -c npm ci
-nix develop -c npm test      # 45 tests, incl. an Opus -> Whisper speech round trip
+nix develop -c npm test      # incl. an Opus -> Whisper speech round trip
 nix build .#scribbydascribe  # the program; runs the unit tests in checkPhase
 nix build                    # the OCI image tarball
 ```

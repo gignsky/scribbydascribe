@@ -61,6 +61,11 @@ buildNpmPackage {
       --add-flags $out/lib/scribbydascribe/src/index.js \
       --set-default SCRIBBYDASCRIBE_PYTHON ${python}/bin/python3 \
       --set-default SCRIBBYDASCRIBE_FFMPEG ${ffmpeg-headless}/bin/ffmpeg
+    # scribby-live: the same program without Discord, for a local microphone.
+    # It records through parecord or pw-record from the host's PATH.
+    makeWrapper ${nodejs_22}/bin/node $out/bin/scribby-live \
+      --add-flags $out/lib/scribbydascribe/src/cli.js \
+      --set-default SCRIBBYDASCRIBE_PYTHON ${python}/bin/python3
     runHook postInstall
   '';
 

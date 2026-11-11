@@ -155,3 +155,27 @@ The round-trip test synthesises two voices with espeak-ng and encodes them to Op
 ## Roadmap
 
 - Video sync: a capture machine records the Discord client window with OBS, and a small helper reads `session.json` to trim or offset the video to `startedAtMs`.
+
+## scribby-live: a live transcript in a text file (CLI)
+
+The same Whisper pipeline without Discord, for a shell on a workstation (merlin). It listens to a microphone, or whatever the machine is playing, and appends what it hears to a plain text file as it is said, so Claude (or `tail -f`) can read the file while it grows.
+
+```
+nix shell .#scribbydascribe -c scribby-live -o ~/live.txt
+```
+
+From a checkout: `nix develop -c node src/cli.js -o ~/live.txt` (or `npm run live -- -o ~/live.txt`).
+
+The file only ever grows. Each utterance is complete when it appears, as a Markdown paragraph, `**[HH:MM:SS] label:** text` (`--format txt`, or a `.txt` file name, gives plain `[HH:MM:SS] label: text` lines), with the time counted from the start of the run (the header line the run writes says when that was). Point Claude at the file, e.g. `tail -n 40 ~/live.txt`, or watch it with the Monitor tool.
+
+| Option | |
+|---|---|
+| `-o, --output FILE` | transcript file (default `./live-transcript.md`); appended to, `--fresh` empties it first |
+| `-s, --source label=device` | what to hear; repeat it to label several. On a call, `-s me=default -s them=<sink>.monitor` (`pactl list short sources`) tells your voice from everyone else's |
+| `-f, --file PATH` | read raw 16 kHz mono s16le from a file or `-` (stdin) instead of a mic |
+| `-m, --model` | `tiny`/`base`/`small`/`medium`. Default `small`; if it logs "falling behind", go smaller |
+| `-l, --language` | e.g. `en`, `de`, or `auto` |
+| `--translate` | write English for speech in any language (Whisper's translate task) |
+| `--silence`, `--max-clip`, `--threshold` | how pauses cut utterances (ms, ms, loudness) |
+
+An utterance appears after you pause (0.7 s by default) or after 10 s of continuous speech. Ctrl-C finishes what was heard and exits. Needs `parecord` or `pw-record` on the PATH. Speech is labelled by source only; there is no per-person split within one source.

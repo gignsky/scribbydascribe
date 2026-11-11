@@ -16,6 +16,7 @@ MODEL = os.environ.get("WHISPER_MODEL", "small")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
 LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "en") or None
+TASK = os.environ.get("WHISPER_TASK", "transcribe")  # or "translate" (to English)
 THREADS = int(os.environ.get("WHISPER_THREADS", "0") or 0)
 
 # /scribe transpose (party mode): a voice embedding for clips whose speaker is
@@ -82,6 +83,7 @@ def main():
             segments, info = model.transcribe(
                 job["path"],
                 language=LANGUAGE,
+                task=TASK,
                 beam_size=5,
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 500},
