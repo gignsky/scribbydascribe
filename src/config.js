@@ -30,11 +30,27 @@ function str(name, fallback) {
   return raw === undefined || raw === '' ? fallback : raw;
 }
 
+/** The speech-to-text worker's settings; needs no Discord token. */
+export function loadWorkerConfig() {
+  return {
+    python: str('SCRIBBYDASCRIBE_PYTHON', 'python3'),
+    workerScript: str('SCRIBBYDASCRIBE_WORKER', new URL('../worker/transcribe.py', import.meta.url).pathname),
+    whisperModel: str('WHISPER_MODEL', 'small'),
+    whisperDevice: str('WHISPER_DEVICE', 'cpu'),
+    whisperCompute: str('WHISPER_COMPUTE_TYPE', 'int8'),
+    whisperLanguage: str('WHISPER_LANGUAGE', 'en'),
+    // 'transcribe', or 'translate' (speech in any language to English text).
+    whisperTask: str('WHISPER_TASK', 'transcribe'),
+    whisperThreads: int('WHISPER_THREADS', 0),
+  };
+}
+
 export function loadConfig() {
   const token = process.env.DISCORD_TOKEN;
   if (!token) throw new Error('DISCORD_TOKEN is not set');
 
   return {
+    ...loadWorkerConfig(),
     token,
     // When set, slash commands are registered to this guild only (instant).
     // When unset they are registered globally (can take a while to appear).
@@ -63,14 +79,6 @@ export function loadConfig() {
     // ...unless it is down longer than this (ms): then each suspended
     // recording is finished as it stood when the bot went down.
     resumeWindowMs: int('SCRIBBYDASCRIBE_RESUME_WINDOW_MS', 15 * 60_000),
-    // Transcription worker.
-    python: str('SCRIBBYDASCRIBE_PYTHON', 'python3'),
-    workerScript: str('SCRIBBYDASCRIBE_WORKER', new URL('../worker/transcribe.py', import.meta.url).pathname),
-    whisperModel: str('WHISPER_MODEL', 'small'),
-    whisperDevice: str('WHISPER_DEVICE', 'cpu'),
-    whisperCompute: str('WHISPER_COMPUTE_TYPE', 'int8'),
-    whisperLanguage: str('WHISPER_LANGUAGE', 'en'),
-    whisperThreads: int('WHISPER_THREADS', 0),
     // ffmpeg is used to encode the per-speaker aligned tracks.
     ffmpeg: str('SCRIBBYDASCRIBE_FFMPEG', 'ffmpeg'),
     // /scribe transpose (party mode): how close (cosine similarity, 0-1) a

@@ -5,10 +5,12 @@
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "scribbydascribe": "src/index.js"
+    "scribbydascribe": "src/index.js",
+    "scribby-live": "src/cli.js"
   },
   "scripts": {
     "start": "node src/index.js",
+    "live": "node src/cli.js",
     "test": "node --test test/*.test.js",
     "deps": "node -e \"import('@discordjs/voice').then(v => console.log(v.generateDependencyReport()))\""
   },

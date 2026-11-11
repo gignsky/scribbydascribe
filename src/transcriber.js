@@ -55,6 +55,7 @@ export class Transcriber extends EventEmitter {
         WHISPER_DEVICE: c.whisperDevice,
         WHISPER_COMPUTE_TYPE: c.whisperCompute,
         WHISPER_LANGUAGE: c.whisperLanguage,
+        WHISPER_TASK: c.whisperTask ?? 'transcribe',
         WHISPER_THREADS: String(c.whisperThreads),
       },
     });
@@ -62,7 +63,9 @@ export class Transcriber extends EventEmitter {
     createInterface({ input: this.#proc.stdout }).on('line', (line) => this.#onLine(line));
 
     this.#proc.on('exit', (code, signal) => {
+      const wasReady = this.ready;
       this.ready = false;
+      if (!this.#closing) this.emit('died', { code, signal, wasReady });
       for (const { reject } of this.#pending.values()) {
         reject(new Error(`transcription worker exited (${code ?? signal})`));
       }
