@@ -24,6 +24,8 @@ const HELP = `scribby-live: live transcript of what a microphone hears, in a tex
   -o, --output FILE     transcript file (default ./live-transcript.md). Appended to.
       --format md|txt  Markdown (default) or plain lines; a .txt FILE implies txt
       --fresh           start the file empty instead of appending
+      --no-follow       don't also show new lines on the terminal as they are written
+                        (on by default when stdout is a terminal, like tail -f; --follow forces it)
   -s, --source SPEC     what to listen to; repeat for several. SPEC is
                         label=device, e.g. -s me=default -s them=<name>.monitor
                         ("pactl list short sources" lists devices). Default: mic=default
@@ -47,6 +49,10 @@ Status goes to stderr.
 // against a newer glibc) makes them load the wrong ones and fail to start.
 delete process.env.LD_LIBRARY_PATH;
 
+// stdout is the transcript (see --follow); the Transcriber's own console.log
+// status lines belong on stderr with the rest.
+console.log = console.error;
+
 const log = (...a) => console.error('[scribby-live]', ...a);
 
 const { values: v } = parseArgs({
@@ -54,6 +60,7 @@ const { values: v } = parseArgs({
     output: { type: 'string', short: 'o', default: 'live-transcript.md' },
     format: { type: 'string' },
     fresh: { type: 'boolean', default: false },
+    follow: { type: 'boolean' },
     source: { type: 'string', short: 's', multiple: true },
     file: { type: 'string', short: 'f' },
     model: { type: 'string', short: 'm' },
@@ -64,6 +71,7 @@ const { values: v } = parseArgs({
     threshold: { type: 'string' },
     help: { type: 'boolean', short: 'h', default: false },
   },
+  allowNegative: true,
 });
 
 if (v.help) {
@@ -105,11 +113,19 @@ if (format !== 'md' && format !== 'txt') {
 const detail = `model ${cfg.whisperModel}${cfg.whisperTask === 'translate' ? ', translating to English' : ''}`;
 const fileHasContent = existsSync(outPath) && statSync(outPath).size > 0;
 const header = formatHeader(new Date(), detail, format, v.fresh || !fileHasContent);
+// Show what is written on the terminal too, as tail -f would. Status goes to
+// stderr, so stdout carries only the transcript and can be piped.
+const follow = v.follow ?? process.stdout.isTTY === true;
 if (v.fresh) writeFileSync(outPath, header);
 else appendFileSync(outPath, header);
+if (follow) process.stdout.write(header);
 
 // A single appendFileSync is a single O_APPEND write: a reader sees whole lines.
-const emitLine = (offsetMs, label, text) => appendFileSync(outPath, formatLine(offsetMs, label, text, format));
+const emitLine = (offsetMs, label, text) => {
+  const line = formatLine(offsetMs, label, text, format);
+  appendFileSync(outPath, line);
+  if (follow) process.stdout.write(line);
+};
 
 // ---- transcription --------------------------------------------------------
 

@@ -172,6 +172,7 @@ The file only ever grows. Each utterance is complete when it appears, as a Markd
 |---|---|
 | `-o, --output FILE` | transcript file (default `./live-transcript.md`); appended to, `--fresh` empties it first |
 | `-s, --source label=device` | what to hear; repeat it to label several. On a call, `-s me=default -s them=<sink>.monitor` (`pactl list short sources`) tells your voice from everyone else's |
+| `--no-follow` | by default, on a terminal, new lines are also shown there as they are written, like `tail -f`; this turns that off (`--follow` forces it when piped) |
 | `-f, --file PATH` | read raw 16 kHz mono s16le from a file or `-` (stdin) instead of a mic |
 | `-m, --model` | `tiny`/`base`/`small`/`medium`. Default `small`; if it logs "falling behind", go smaller |
 | `-l, --language` | e.g. `en`, `de`, or `auto` |
