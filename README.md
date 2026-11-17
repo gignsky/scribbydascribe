@@ -94,8 +94,24 @@ Because every track starts at the same moment as the transcript, lining up video
 
 1. Go to <https://discord.com/developers/applications>, choose **New Application**, open **Bot**, and choose **Reset Token**. Copy the token.
 2. On the same **Bot** page, under Privileged Gateway Intents, switch on **Message Content Intent**. This lets the bot record text chat alongside the call. It is the only privileged intent needed; without it, voice is still recorded.
-3. Open **OAuth2 → URL Generator**. Select the scopes `bot` and `applications.commands`, and the permissions View Channels, Connect, Send Messages and Attach Files. Open the URL it generates and invite the bot to your server. Chat is only recorded from text channels where the bot has View Channels, so hide a channel from the bot's role to keep it out.
+3. Build the invite URL. Open **OAuth2 → URL Generator** and set:
+   - **Scopes:** tick both `bot` and `applications.commands`. Without `applications.commands` the bot joins but the server gets no slash commands. The **Bot Permissions** box appears only after you tick `bot`.
+   - **Bot Permissions:** View Channels, Send Messages and Attach Files (under Text Permissions), and Connect (under Voice Permissions). Nothing else is needed.
+   - **Integration Type:** Guild Install.
+   - **Redirect URL:** leave it empty.
+
+   The generated URL should look like this, with your application ID from **General Information**:
+   ```
+   https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&permissions=1084416&integration_type=0&scope=bot+applications.commands
+   ```
+   `1084416` is those four permissions together, so you can also type the URL by hand. Open it, pick the server, and authorize. You need Manage Server on that server. Use the same URL for every server you add the bot to.
+
+   Chat is only recorded from text channels where the bot has View Channels, so hide a channel from the bot's role to keep it out.
 4. Optional: to control who may record, use Server Settings → Integrations → scribbydascribe.
+
+**If a server has the bot but no commands:**
+- `DISCORD_GUILD_ID` may be set (see the deployment section below). It registers the commands in that one server only, so any other server gets none. Remove it to register them everywhere. Global commands can take up to an hour to appear.
+- The bot may have been invited without the `applications.commands` scope. Kick it and invite it again with the URL above.
 
 ## Deploying on spacedock
 
@@ -103,7 +119,7 @@ Because every track starts at the same moment as the transcript, lining up video
 2. Add the secret with `just sops`, as a key `scribbydascribe-env` whose value is an env file:
    ```
    DISCORD_TOKEN=...
-   DISCORD_GUILD_ID=...   # optional; registers the slash commands instantly in that server
+   DISCORD_GUILD_ID=...   # optional, for testing: registers the commands instantly, but ONLY in that server. Leave it out to use the bot in more than one server.
    ```
 3. In `.dotfiles/flake.nix`, add the input:
    ```nix
