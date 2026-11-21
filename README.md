@@ -4,7 +4,7 @@
 
 It was built for a D&D game, so it also rolls dice, keeps the table's text chat next to the speech, and makes a best-effort split of several players sharing one mic.
 
-> **Status: early, invite-only.** Scribby runs on one machine its maintainer looks after, and is being tried on a handful of servers. Expect rough edges, and expect the transcript to arrive a while after a long call (see [How long a transcript takes](#how-long-a-transcript-takes)).
+> **Status: early.** Scribby runs on one machine its maintainer looks after, and is being tried on a handful of servers. Expect rough edges, and expect the transcript to arrive a while after a long call (see [How long a transcript takes](#how-long-a-transcript-takes)).
 
 ## What you get
 
@@ -36,7 +36,9 @@ Each person's line comes from their own audio stream, so speakers are never gues
 
 ## Getting Scribby on your server
 
-Scribby is invite-only for now. Message the maintainer on Discord, who will send you the invite link. Someone with **Manage Server** opens it and picks your server. That is the whole install: nothing to host and no token to set up.
+**[Add Scribby to your server](https://discord.com/oauth2/authorize?client_id=1552827800128327680&permissions=1084416&integration_type=0&scope=bot+applications.commands)**
+
+Someone with **Manage Server** opens that link and picks your server. That is the whole install: nothing to host and no token to set up. The maintainer gets a note whenever a recording starts, so new servers don't go unnoticed.
 
 The link asks for only what the bot uses:
 
@@ -167,7 +169,7 @@ The rest of this README is for whoever hosts the bot.
    - **Integration Type:** Guild Install.
    - **Redirect URL:** leave it empty.
 
-   The generated URL should look like this, with your application ID from **General Information**:
+   The generated URL should look like this, with your application ID from **General Information** (the hosted Scribby's is `1552827800128327680`, used in the link at the top):
    ```
    https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&permissions=1084416&integration_type=0&scope=bot+applications.commands
    ```
