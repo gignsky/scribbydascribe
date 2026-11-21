@@ -68,8 +68,13 @@ export function loadConfig() {
     // Whisper tends to invent words on tiny, near-empty clips.
     minClipMs: int('SCRIBBYDASCRIBE_MIN_CLIP_MS', 400),
     // A single clip is cut after this long, even mid-sentence (ms), so a
-    // long monologue still transcribes as the call goes.
-    maxClipMs: int('SCRIBBYDASCRIBE_MAX_CLIP_MS', 30_000),
+    // long monologue still transcribes as the call goes. Short enough that
+    // the live notes keep pace with a long explanation, like scribby-live's
+    // 10 s.
+    maxClipMs: int('SCRIBBYDASCRIBE_MAX_CLIP_MS', 10_000),
+    // Keep live.md in each session folder: the transcript so far, growing as
+    // the call goes, for reading during the call (Ready Room, tail -f).
+    liveNotes: bool('SCRIBBYDASCRIBE_LIVE_NOTES', true),
     // Leave and finish the session after the bot has been alone this long (ms).
     aloneTimeoutMs: int('SCRIBBYDASCRIBE_ALONE_TIMEOUT_MS', 120_000),
     // When the bot is stopped (an update, a reboot), keep recordings where

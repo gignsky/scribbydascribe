@@ -689,6 +689,7 @@ async function onInteraction(i) {
     (recordChat
       ? `Everything said in the channel, and every message posted in this server's text channels, is being saved. `
       : `Everything said in the channel is being saved. `) +
+    (cfg.liveNotes ? `Live notes are kept as the call goes, so the transcript so far can be read during the call. ` : '') +
     `Use \`/scribe stop\` to end it.`;
   if (i.deferred) await i.editReply(notice);
   else await i.channel.send(notice);
