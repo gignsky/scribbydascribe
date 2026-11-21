@@ -8,7 +8,7 @@ It was built for a D&D game, so it also rolls dice, keeps the table's text chat 
 
 ## What you get
 
-When a recording stops, Scribby posts `transcript.md` and `transcript.srt` in the channel where it was started. An example (names and words made up):
+When a recording stops, Scribby posts `transcript.md` in the channel where it was started. An example (names and words made up):
 
 ```markdown
 # The Gilded Table / Session Zero — 2026-11-14 23:00 UTC
@@ -32,7 +32,7 @@ When a recording stops, Scribby posts `transcript.md` and `transcript.srt` in th
 **[00:00:35] Teodor:** I'll check the gate for traps while Wren's away.
 ```
 
-Each person's line comes from their own audio stream, so speakers are never guessed. You can also export past sessions as JSONL, CSV or Markdown, and each recording keeps one audio track per speaker.
+Each person's line comes from their own audio stream, so speakers are never guessed. You can also export past sessions as JSONL, CSV or Markdown, or get a session's call audio with `/scribe export audio`. Each recording also keeps one audio track per speaker on the host.
 
 ## Getting Scribby on your server
 
@@ -76,9 +76,9 @@ Transcription runs on a CPU, in the order recordings come in, shared between eve
 | `/scribe start` | Joins your current voice channel and starts recording. It announces the recording in the channel where you ran the command and in the voice channel's chat. |
 | `/scribe pause` | Stops capturing audio but stays in the call. The pause is announced like the start is. Nothing said while paused is saved. |
 | `/scribe resume` | Starts capturing again, and says so in the channel. |
-| `/scribe stop` | Stops recording, finishes transcribing, and posts `transcript.md` and `transcript.srt` in the channel where recording started. Until then, its reply is a progress message that updates itself every 10 seconds: the step it is on, a progress bar and a rough time left. When the transcript is out it reads ✅. A recording that stops by itself (everyone left, the connection dropped, the container stopped) posts the same progress message in the channel where it was started. |
+| `/scribe stop` | Stops recording, finishes transcribing, and posts `transcript.md` in the channel where recording started. Until then, its reply is a progress message that updates itself every 10 seconds: the step it is on, a progress bar and a rough time left. When the transcript is out it reads ✅. A recording that stops by itself (everyone left, the connection dropped, the container stopped) posts the same progress message in the channel where it was started. |
 | `/scribe status` | While recording: how long, the speakers so far, the line count, and whether transcription is keeping up. If it is behind, it shows how much audio is waiting and roughly how long catching up will take. After a stop, until the transcript is posted: which step it is on (transcribing, writing files, building tracks, posting), with a progress bar, clips done and a rough time left. Once it is posted: when the last recording finished and where its transcript went. It also says if the speech model is still loading. Only you can see the reply. |
-| `/scribe export [format]` | Offers this server's finished sessions (the 25 most recent) in a menu. Pick any number and you get one file: `jsonl` (default) or `csv`, one row per spoken line from all of them, or `md`, each session laid out like its own `transcript.md`, oldest first. Only you see the menu and the file. |
+| `/scribe export [format]` | Offers this server's finished sessions (the 25 most recent) in a menu. Pick any number and you get one file: `jsonl` (default) or `csv`, one row per spoken line from all of them, or `md`, each session laid out like its own `transcript.md`, oldest first. `audio` instead gets each chosen session's call audio (see below). Only you see the menu and the files. |
 | `/scribe transpose @user [names]` | Declares that `@user`'s mic carries several party members sharing it, as a comma-separated list of names (`Alice, Bob`), split apart best-effort by voice (see below). Leave `names` blank to stop splitting them. Takes effect in the current recording, if any, and every future one. If that account has spoken in a past recording here, offers a menu to re-split it too. |
 | `/scribe help` | Lists the commands. Only you can see the reply. |
 | `/roll [dice] [for]` | Rolls dice in the open and shows the working, e.g. `@Ferren 🎲 rolled \`2d20kh1 + 5\` for stealth: [~~4~~, 17] + 5 = **22**`. Takes `NdM` terms joined by `+`/`-`, plain numbers, `d%` for d100, and `khN`/`klN` to keep the highest or lowest N dice (`4d6kh3`, `2d20kh1` for advantage, `2d20kl1` for disadvantage). With no dice given it rolls a `d20`. Up to 100 dice of up to 1000 sides per term. A roll made while the server is being recorded goes into the transcript as a chat line credited to whoever rolled, even when text chat is not being recorded. |
@@ -136,6 +136,8 @@ The roster itself (who is declared behind which account, per server) lives in `t
 
 JSONL has one JSON object per line. CSV has a header row and uses CRLF line endings, with RFC 4180 quoting. Discord caps a bot's upload at 10 MiB. A larger export is saved on the host in `/var/lib/scribbydascribe/exports/` (`SCRIBBYDASCRIBE_EXPORT_DIR` in the container) instead, and the reply names the file.
 
+An `audio` export is one Ogg Opus file per session, named after its folder: the call mixed down (`tracks/mix.ogg`), or the one speaker's track when only one person spoke. As many as fit in 10 MiB (and 10 files) come with the reply. The rest are copied to the exports folder on the host, and the reply names them. At 64 kbit/s that is roughly 20 minutes of call per upload, so a long session will usually land on the host. A session whose tracks could not be built is listed as having no audio. The per-speaker tracks stay in each session's `tracks/` folder.
+
 ## What a session leaves behind
 
 `/var/lib/scribbydascribe/sessions/2026-09-24T20-00-00_Council/`
@@ -143,7 +145,7 @@ JSONL has one JSON object per line. CSV has a header row and uses CRLF line endi
 | File | Contents |
 |---|---|
 | `transcript.md` | A readable transcript, e.g. `**[00:01:12] Lord Gig:** …`. A speaker's lines that follow closely on each other are joined into one paragraph. |
-| `transcript.srt` | Subtitles, one cue per line. Load this against a video to check the sync. |
+| `transcript.srt` | Subtitles, one cue per line. Load this against a video to check the sync. Kept on the host only; it is not posted to Discord. |
 | `transcript.json` | Every line with start and end in ms, speaker ID and name, plus the list of clips. |
 | `events.jsonl` | Transcribed clips, appended as the call goes, so a crash still leaves a record. |
 | `chat.jsonl` | Text messages posted anywhere in the server during the recording, appended as they arrive. They are also interleaved into `transcript.md` (marked 💬) and listed under `chat` in `transcript.json`. |
