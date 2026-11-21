@@ -17,7 +17,7 @@ export const HELP = [
   '`/roll [dice] [for]`: roll dice, like `d20`, `2d6+3`, `4d6kh3` (keep the highest 3) or `2d20kh1+5` (advantage). A roll made during a recording goes into its transcript.',
   '',
   'The bot also stops by itself two minutes after everyone has left the call.',
-  'After a stop, the transcript is posted as `transcript.md` and `transcript.srt`.',
+  'After a stop, the transcript is posted here as `transcript.md`.',
 ].join('\n');
 
 /** A text progress bar, e.g. `▓▓▓▓▓▓░░░░ 60%`. */

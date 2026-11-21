@@ -8,7 +8,7 @@ It was built for a D&D game, so it also rolls dice, keeps the table's text chat 
 
 ## What you get
 
-When a recording stops, Scribby posts `transcript.md` and `transcript.srt` in the channel where it was started. An example (names and words made up):
+When a recording stops, Scribby posts `transcript.md` in the channel where it was started. An example (names and words made up):
 
 ```markdown
 # The Gilded Table / Session Zero — 2026-11-14 23:00 UTC
@@ -76,7 +76,7 @@ Transcription runs on a CPU, in the order recordings come in, shared between eve
 | `/scribe start` | Joins your current voice channel and starts recording. It announces the recording in the channel where you ran the command and in the voice channel's chat. |
 | `/scribe pause` | Stops capturing audio but stays in the call. The pause is announced like the start is. Nothing said while paused is saved. |
 | `/scribe resume` | Starts capturing again, and says so in the channel. |
-| `/scribe stop` | Stops recording, finishes transcribing, and posts `transcript.md` and `transcript.srt` in the channel where recording started. Until then, its reply is a progress message that updates itself every 10 seconds: the step it is on, a progress bar and a rough time left. When the transcript is out it reads ✅. A recording that stops by itself (everyone left, the connection dropped, the container stopped) posts the same progress message in the channel where it was started. |
+| `/scribe stop` | Stops recording, finishes transcribing, and posts `transcript.md` in the channel where recording started. Until then, its reply is a progress message that updates itself every 10 seconds: the step it is on, a progress bar and a rough time left. When the transcript is out it reads ✅. A recording that stops by itself (everyone left, the connection dropped, the container stopped) posts the same progress message in the channel where it was started. |
 | `/scribe status` | While recording: how long, the speakers so far, the line count, and whether transcription is keeping up. If it is behind, it shows how much audio is waiting and roughly how long catching up will take. After a stop, until the transcript is posted: which step it is on (transcribing, writing files, building tracks, posting), with a progress bar, clips done and a rough time left. Once it is posted: when the last recording finished and where its transcript went. It also says if the speech model is still loading. Only you can see the reply. |
 | `/scribe export [format]` | Offers this server's finished sessions (the 25 most recent) in a menu. Pick any number and you get one file: `jsonl` (default) or `csv`, one row per spoken line from all of them, or `md`, each session laid out like its own `transcript.md`, oldest first. Only you see the menu and the file. |
 | `/scribe transpose @user [names]` | Declares that `@user`'s mic carries several party members sharing it, as a comma-separated list of names (`Alice, Bob`), split apart best-effort by voice (see below). Leave `names` blank to stop splitting them. Takes effect in the current recording, if any, and every future one. If that account has spoken in a past recording here, offers a menu to re-split it too. |
@@ -143,7 +143,7 @@ JSONL has one JSON object per line. CSV has a header row and uses CRLF line endi
 | File | Contents |
 |---|---|
 | `transcript.md` | A readable transcript, e.g. `**[00:01:12] Lord Gig:** …`. A speaker's lines that follow closely on each other are joined into one paragraph. |
-| `transcript.srt` | Subtitles, one cue per line. Load this against a video to check the sync. |
+| `transcript.srt` | Subtitles, one cue per line. Load this against a video to check the sync. Kept on the host only; it is not posted to Discord. |
 | `transcript.json` | Every line with start and end in ms, speaker ID and name, plus the list of clips. |
 | `events.jsonl` | Transcribed clips, appended as the call goes, so a crash still leaves a record. |
 | `chat.jsonl` | Text messages posted anywhere in the server during the recording, appended as they arrive. They are also interleaved into `transcript.md` (marked 💬) and listed under `chat` in `transcript.json`. |

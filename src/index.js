@@ -508,7 +508,10 @@ async function postTranscript(session, reason, progress) {
   } finally {
     stopProgress();
   }
-  const files = [new AttachmentBuilder(`${res.dir}/transcript.md`), new AttachmentBuilder(`${res.dir}/transcript.srt`)];
+  // Only the readable transcript is posted. transcript.srt (subtitles) stays in
+  // the session folder: without the audio or a video to play it against, it
+  // only repeats transcript.md.
+  const files = [new AttachmentBuilder(`${res.dir}/transcript.md`)];
   const speakers = new Set(res.lines.map((l) => l.speaker)).size;
   const notes = [];
   if (res.failed) notes.push(`${res.failed} clip(s) failed to transcribe`);
