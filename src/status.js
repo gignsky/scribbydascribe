@@ -137,3 +137,57 @@ export function describeLast(last) {
     (last.posted ? `; its transcript was posted${last.postedIn ? ` in ${last.postedIn}` : ''}.` : ', but its transcript could not be posted. It is saved on the host.')
   );
 }
+
+/**
+ * Did this voice-state change bring a person (not a bot) into the recorded
+ * channel? Moving between other channels, muting or unmuting, and rejoining
+ * the same channel without leaving it are not joins.
+ */
+export function joinedRecording(oldState, newState, channelId) {
+  if (newState.channelId !== channelId || oldState.channelId === channelId) return false;
+  return !(newState.member?.user?.bot ?? true);
+}
+
+/**
+ * The notice for someone who joins a call that is already being recorded,
+ * so they hear it from the bot rather than relying on whoever started it.
+ */
+export function joinNotice({ mention, channelName, recordChat, paused }) {
+  const what = recordChat
+    ? 'what is said here, and messages posted in this server\'s text channels, are being saved'
+    : 'what is said here is being saved';
+  const state = paused ? ' (paused right now, so nothing is being captured until someone runs `/scribe resume`)' : '';
+  return (
+    `🔴 ${mention}, **${channelName} is being recorded and transcribed**${state}: ${what}. ` +
+    `If you'd rather not be recorded, leave the call or ask for \`/scribe stop\`.`
+  );
+}
+
+/** Bot permissions the invite asks for: View Channels, Send Messages, Attach Files, Connect. */
+export const INVITE_PERMISSIONS = '1084416';
+
+/** The guild-install invite URL for an application. */
+export function inviteUrl(applicationId) {
+  return `https://discord.com/oauth2/authorize?client_id=${applicationId}&permissions=${INVITE_PERMISSIONS}&integration_type=0&scope=bot+applications.commands`;
+}
+
+/** Who owns the bot: the application's owner, or its team's owner. */
+export function ownerOf(application) {
+  const owner = application?.owner;
+  if (!owner) return null;
+  return owner.ownerId ?? owner.id ?? null;
+}
+
+/** The owner hears about every recording except the ones they start. */
+export function shouldAlertOwner({ notify, ownerId, starterId }) {
+  return Boolean(notify && ownerId && starterId !== ownerId);
+}
+
+/** The DM the owner gets when someone else starts a recording. */
+export function ownerAlert({ starter, guildName, channelName, channelUrl, recordChat }) {
+  return (
+    `🔴 **${starter}** started recording **${channelName}** in **${guildName}**` +
+    (recordChat ? ', with text chat' : '') +
+    `.\n${channelUrl}`
+  );
+}

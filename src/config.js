@@ -88,5 +88,10 @@ export function loadConfig() {
     // together; higher keeps voices apart but splinters one person into
     // several. Best-effort either way.
     voiceSplitThreshold: float('SCRIBBYDASCRIBE_VOICE_SPLIT_THRESHOLD', 0.75),
+    // DM the bot's owner whenever someone else starts a recording, on any
+    // server. The owner is the Discord application's owner (or its team's
+    // owner) unless SCRIBBYDASCRIBE_OWNER_ID names a user.
+    notifyOwner: bool('SCRIBBYDASCRIBE_NOTIFY_OWNER', true),
+    ownerId: str('SCRIBBYDASCRIBE_OWNER_ID', null),
   };
 }

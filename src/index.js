@@ -29,7 +29,18 @@ import { intentsFor, isDisallowedIntents, probeChatIntent } from './intents.js';
 import { RecordingSession, Suspended, findSuspended } from './session.js';
 import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
-import { HELP, describe, describeLast, finishedLine } from './status.js';
+import {
+  HELP,
+  describe,
+  describeLast,
+  finishedLine,
+  inviteUrl,
+  joinNotice,
+  joinedRecording,
+  ownerAlert,
+  ownerOf,
+  shouldAlertOwner,
+} from './status.js';
 import { roll } from './dice.js';
 import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport, renderMarkdown } from './export.js';
 import { MAX_PARTY_MEMBERS, clearMembers, parseNames, setMembers } from './transpose.js';
@@ -319,11 +330,39 @@ async function onReady(c) {
     await c.application.commands.set(commands);
     console.log('[bot] commands registered globally');
   }
+  console.log(`[bot] invite link: ${inviteUrl(c.application.id)}`);
+  if (cfg.notifyOwner && !ownerId) {
+    try {
+      ownerId = cfg.ownerId ?? ownerOf(await c.application.fetch());
+      console.log(ownerId ? `[bot] new recordings will be reported to the owner (${ownerId})` : '[bot] could not tell who owns the bot; recordings will not be reported');
+    } catch (err) {
+      console.error('[bot] could not look up the bot owner:', err);
+    }
+  }
   // Once only: a voice-only reconnect fires ready again.
   resuming ??= resumeSuspended(c).catch((err) => console.error('[bot] resuming recordings failed:', err));
 }
 
 let resuming = null;
+/** The user told about recordings someone else starts (see SCRIBBYDASCRIBE_NOTIFY_OWNER). */
+let ownerId = null;
+
+// DM the owner that a recording started, unless they started it. A failed DM
+// (DMs closed, no shared server) is logged and never gets in the recording's way.
+function alertOwner(session, starter) {
+  if (!shouldAlertOwner({ notify: cfg.notifyOwner, ownerId, starterId: starter.id })) return;
+  const { guild } = session.voiceChannel;
+  const content = ownerAlert({
+    starter: `${starter.displayName ?? starter.username} (${starter.username})`,
+    guildName: guild.name,
+    channelName: session.voiceChannel.name,
+    channelUrl: `https://discord.com/channels/${guild.id}/${session.voiceChannel.id}`,
+    recordChat,
+  });
+  client.users
+    .send(ownerId, { content, allowedMentions: { parse: [] } })
+    .catch((err) => console.error('[bot] could not tell the owner about a new recording:', err.message));
+}
 
 /** Pick up every recording the last shutdown left suspended. */
 async function resumeSuspended(c) {
@@ -597,6 +636,7 @@ async function onInteraction(i) {
     return i.deferred ? i.editReply(msg) : i.followUp(msg);
   }
   sessions.set(i.guildId, session);
+  alertOwner(session, i.user);
 
   // Everyone in the call should know they are being recorded.
   const notice =
@@ -612,11 +652,33 @@ async function onInteraction(i) {
   }
 }
 
+/** RecordingSession -> ids of people already told it is recording */
+const greeted = new WeakMap();
+
+// Tell anyone who joins mid-recording that they are being recorded, once per
+// person per session, in the voice channel's own chat where it has one.
+function greetJoiner(session, oldState, newState) {
+  if (session.stopping || !joinedRecording(oldState, newState, session.voiceChannel.id)) return;
+  const seen = greeted.get(session) ?? new Set();
+  greeted.set(session, seen);
+  if (seen.has(newState.id)) return;
+  seen.add(newState.id);
+  const notice = joinNotice({
+    mention: `<@${newState.id}>`,
+    channelName: session.voiceChannel.name,
+    recordChat,
+    paused: Boolean(session.pausedAt),
+  });
+  const where = session.voiceChannel.isTextBased() ? session.voiceChannel : session.textChannel;
+  where?.send({ content: notice, allowedMentions: { users: [newState.id] } }).catch(() => {});
+}
+
 // Leave on our own once everyone else has gone.
 function onVoiceStateUpdate(oldState, newState) {
   for (const guildId of new Set([oldState.guild.id, newState.guild.id])) {
     const session = sessions.get(guildId);
     if (!session) continue;
+    greetJoiner(session, oldState, newState);
     const humans = session.voiceChannel.members.filter((m) => !m.user.bot).size;
     const timer = aloneTimers.get(guildId);
     if (humans === 0 && !timer) {
