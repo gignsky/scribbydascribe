@@ -11,8 +11,9 @@ A Discord bot that records voice calls and writes per-speaker, timestamped trans
 | `src/dice.js` | dice notation for `/roll`: parse, roll, and show the working |
 | `src/status.js` | the help text, the `/scribe status` wording, and the notice for someone joining a call mid-recording, as pure functions |
 | `src/export.js` | lists finished sessions and renders the combined JSONL/CSV/Markdown export, or picks each session's audio |
-| `src/session.js` | one recording: voice receive, a clip per speaker's turn, pause/resume, text chat, the transcription queue and its progress, final outputs, and suspend/restore across a restart (`resume.json`) |
+| `src/session.js` | one recording: voice receive, a clip per speaker's turn, pause/resume, text chat, the transcription queue and its progress, live notes (`live.md`), final outputs, and suspend/restore across a restart (`resume.json`) |
 | `src/cli.js`, `src/live.js` | `scribby-live`: the no-Discord CLI. Listens to a mic/monitor (parecord or pw-record) or a raw PCM file/stdin, cuts it into clips at pauses (`Endpointer`), and appends one `[HH:MM:SS] label: text` entry per utterance (Markdown by default) to a file that readers can tail while it grows |
+| `src/livenotes.js` | the lines of `live.md`, the transcript a session appends as the call goes (scribby-live's format), for reading during the call |
 | `src/audio.js` | PCM helpers and `ClipBuilder` (keeps clips true to the wall clock) |
 | `src/transcriber.js` | drives the Python worker over JSON lines on stdin/stdout, and measures its speed for the status time estimates |
 | `src/output.js` | transcript md/srt/json and ffmpeg-built aligned speaker tracks |

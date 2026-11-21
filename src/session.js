@@ -11,9 +11,10 @@ import {
 } from '@discordjs/voice';
 import prism from 'prism-media';
 import { ClipBuilder, stereoToMono, toWav } from './audio.js';
-import { buildLines, buildTracks, toJson, toMarkdown, toSrt } from './output.js';
+import { buildLines, buildTracks, clock, toJson, toMarkdown, toSrt } from './output.js';
 import { SpeakerClusters, rawSpeakerId } from './diarize.js';
 import { getMembers } from './transpose.js';
+import { LIVE_FILE, liveChat, liveHeader, liveMark, liveSpeech } from './livenotes.js';
 
 function stamp(d) {
   return d.toISOString().replace(/[:]/g, '-').replace(/\..+$/, '');
@@ -116,6 +117,7 @@ export class RecordingSession {
   #done = new Set(); // clip files whose job has settled, to requeue the rest after a restart
   #writes = new Set(); // clip files still being written to disk
   #suspended = false; // shutting down for a restart: unfinished work is kept, not failed
+  #liveWrites = Promise.resolve(); // keeps live.md appends in order
   #connect;
 
   /**
@@ -161,8 +163,27 @@ export class RecordingSession {
 
     // The sync anchor: every timestamp in the outputs is an offset from here.
     this.startedAt = Date.now();
+    this.#live(liveHeader({ ...this.meta, startedBy: this.startedBy.tag }));
     await this.#writeMeta();
     this.#watchConnection();
+  }
+
+  /** Whether this session keeps live notes (live.md) as it goes. */
+  get liveNotes() {
+    return this.#cfg.liveNotes !== false;
+  }
+
+  /** Append to live.md, in order, after everything appended before. */
+  #live(text) {
+    if (!this.liveNotes || !text) return;
+    this.#liveWrites = this.#liveWrites
+      .then(() => appendFile(join(this.dir, LIVE_FILE), text))
+      .catch((err) => console.error('[session] writing live.md failed:', err.message));
+  }
+
+  /** A note about the recording itself, at this moment on the session timeline. */
+  #liveMark(text, at = Date.now()) {
+    this.#live(liveMark(at - this.startedAt, text));
   }
 
   #watchConnection() {
@@ -305,6 +326,7 @@ export class RecordingSession {
         this.#entries.push(entry);
         // Written as we go, so a crash still leaves a usable record.
         await appendFile(join(this.dir, 'events.jsonl'), JSON.stringify(entry) + '\n');
+        this.#live(liveSpeech(entry));
       } catch (err) {
         if (this.#suspended) {
           // The worker was stopped for a restart; this clip goes again after.
@@ -327,7 +349,10 @@ export class RecordingSession {
 
   async #writeMeta(extra = {}) {
     const speakers = Object.fromEntries(this.#names);
-    await writeFile(join(this.dir, 'session.json'), JSON.stringify({ ...this.meta, speakers, ...extra }, null, 2) + '\n');
+    // `live` tells a reader of live.md (Ready Room) that the file is still
+    // growing; it turns false once the transcript is written.
+    const live = this.liveNotes ? { live: this.#phase !== 'done', liveNotes: LIVE_FILE } : {};
+    await writeFile(join(this.dir, 'session.json'), JSON.stringify({ ...this.meta, speakers, ...live, ...extra }, null, 2) + '\n');
   }
 
   /** Where the session is now: recording, paused, or one of the finishing steps. */
@@ -408,6 +433,7 @@ export class RecordingSession {
 
   #addChat(entry) {
     this.#chat.push(entry);
+    this.#live(liveChat(entry));
     // Written as we go, like events.jsonl, so a crash still leaves a record.
     this.#chatWrites = this.#chatWrites
       .then(() => appendFile(join(this.dir, 'chat.jsonl'), JSON.stringify(entry) + '\n'))
@@ -438,6 +464,7 @@ export class RecordingSession {
     if (this.stopping || this.pausedAt) return false;
     this.pausedAt = Date.now();
     this.#pauses.push({ startMs: this.pausedAt - this.startedAt, endMs: null, by });
+    this.#liveMark(by ? `Recording paused by ${by}.` : 'Recording paused.', this.pausedAt);
     this.#flushActive();
     this.#writeMeta().catch((err) => console.error('[session] writing session.json failed:', err.message));
     return true;
@@ -446,7 +473,9 @@ export class RecordingSession {
   /** @returns {boolean} false if not paused or stopping */
   resume() {
     if (this.stopping || !this.pausedAt) return false;
-    this.#closePause(Date.now());
+    const now = Date.now();
+    this.#closePause(now);
+    this.#liveMark('Recording resumed.', now);
     // Anyone already talking won't raise a fresh 'start' until they next go
     // quiet, so pick them up now.
     for (const userId of this.connection.receiver.speaking.users.keys()) this.#listen(userId);
@@ -471,6 +500,7 @@ export class RecordingSession {
     this.stoppedAt ||= Date.now();
     this.reason = reason;
     this.#closePause(this.stoppedAt);
+    this.#liveMark(`Recording stopped (${reason}).`, this.stoppedAt);
     this.#phase = 'transcribing';
     // Flush every open clip, then hang up.
     this.#flushActive();
@@ -482,6 +512,8 @@ export class RecordingSession {
 
     this.#phase = 'writing';
     await this.#chatWrites;
+    this.#live('_Live notes end here. transcript.md has the finished transcript._\n');
+    await this.#liveWrites;
     const meta = this.meta;
     const lines = buildLines(this.#entries);
     const chat = [...this.#chat].sort((a, b) => a.atMs - b.atMs);
@@ -512,8 +544,8 @@ export class RecordingSession {
       tracksError = err.message;
       console.error('[session] building tracks failed:', err);
     }
-    await this.#writeMeta({ stoppedAt: new Date(this.stoppedAt).toISOString(), reason, failedClips: this.#failed, tracksError });
     this.#phase = 'done';
+    await this.#writeMeta({ stoppedAt: new Date(this.stoppedAt).toISOString(), reason, failedClips: this.#failed, tracksError });
 
     return { dir: this.dir, meta, lines, chat, reason, failed: this.#failed, tracksError };
   }
@@ -533,6 +565,7 @@ export class RecordingSession {
       if (!this.pausedAt) {
         this.pausedAt = this.suspendedAt;
         this.#pauses.push({ startMs: this.suspendedAt - this.startedAt, endMs: null, by: null, restart: true });
+        this.#liveMark('Recording paused while the bot restarts.', this.suspendedAt);
       }
       this.#flushActive();
       this.connection?.destroy();
@@ -573,6 +606,7 @@ export class RecordingSession {
   }
 
   async saveState() {
+    await this.#liveWrites; // live.md's last lines before the bot goes down
     await writeFile(join(this.dir, RESUME_FILE), JSON.stringify(this.state, null, 2) + '\n');
   }
 
@@ -629,7 +663,11 @@ export class RecordingSession {
     this.connection = await this.#connect(this.voiceChannel);
     this.#watchConnection();
     const last = this.#pauses.at(-1);
-    if (last?.restart && last.endMs == null) this.#closePause(Date.now());
+    if (last?.restart && last.endMs == null) {
+      const now = Date.now();
+      this.#closePause(now);
+      this.#liveMark(`Recording resumed after the restart, ${clock(now - this.suspendedAt)} later.`, now);
+    }
     if (!this.pausedAt) for (const userId of this.connection.receiver.speaking.users.keys()) this.#listen(userId);
     this.#writeMeta().catch((err) => console.error('[session] writing session.json failed:', err.message));
   }

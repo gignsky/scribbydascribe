@@ -60,6 +60,7 @@ Please read this before you record anyone.
 
 - **Everyone is told.** `/scribe start` announces the recording in the channel it was run in and in the voice channel's chat. Anyone who joins the call while it is recording is told too, by name. Pausing and resuming are announced the same way.
 - **What is kept:** the audio of each speaker, the transcript, and, while recording, messages posted in any text channel the bot can see (a channel hidden from the bot's role is never read, and the maintainer can turn chat recording off altogether). Nothing is captured while a recording is paused.
+- **Live notes:** while a recording runs, the transcript so far is also kept on the host as it is transcribed (`live.md`), so the maintainer's own tools can read the call while it is still going. The start announcement says so.
 - **Where it lives:** on the maintainer's own machine, not a cloud service. Speech is turned into text on that machine too (with Whisper), so audio is never sent to a transcription company.
 - **Who sees it:** the transcript is posted in your server. Exports only ever show your own server's sessions to people in your server.
 - **Opting out:** anyone who doesn't want to be recorded can leave the call or ask for `/scribe stop`. Ask everyone first: in some places (several US states, and much of Europe) recording a conversation needs everyone's consent, not just one person's.
@@ -106,6 +107,14 @@ While a recording runs, every message posted in any text channel the bot can see
 
 This needs Discord's privileged **Message Content** intent (see the setup steps below). The bot checks on startup whether it has been granted it, and if not simply doesn't ask for it: voice is still recorded, and a line in the log says chat is not. Set `SCRIBBYDASCRIBE_RECORD_CHAT=false` to turn chat recording off and stop the check.
 
+### Live notes
+
+While a recording runs, `live.md` in the session folder grows as each clip is transcribed, in the same format as [scribby-live](#scribby-live-a-live-transcript-in-a-text-file-cli): one Markdown paragraph per utterance, `**[00:14:02] Lilu:** text`, with chat (`💬`) and notes about the recording itself (`_[00:20:10] Recording paused by Gig._`) between them. It is only ever appended to, a whole paragraph per write, so anything reading it while it grows (`tail -f`, Ready Room) never sees half a line.
+
+Clips are transcribed as they finish, not in the order they were said, so a line can land a few seconds out of sequence; every line carries its own time. A line appears after the speaker pauses, or after 10 s of unbroken speech (`SCRIBBYDASCRIBE_MAX_CLIP_MS`), plus however long transcription takes. If transcription is behind, `/scribe status` says by how much.
+
+`session.json` has `"live": true` while the file is still growing, and `false` once the transcript is written. A crash, as opposed to a stop, can leave it `true`, so a reader should also look at when `live.md` last changed. After a stop, lines still being transcribed land after the `Recording stopped` note, and the file ends with `_Live notes end here…_`. Across a restart the same file carries on, with the gap noted. Set `SCRIBBYDASCRIBE_LIVE_NOTES=false` to stop keeping it.
+
 ### Party mode (`/scribe transpose`)
 
 Sometimes several people are in the room with one Discord account, sharing its mic — a table of players around one laptop, say. `/scribe transpose @user Alice, Bob, Cara` tells the bot to split that account's clips between up to 8 named party members instead of labelling everything with the Discord display name.
@@ -147,10 +156,11 @@ An `audio` export is one Ogg Opus file per session, named after its folder: the 
 | `transcript.md` | A readable transcript, e.g. `**[00:01:12] Lord Gig:** …`. A speaker's lines that follow closely on each other are joined into one paragraph. |
 | `transcript.srt` | Subtitles, one cue per line. Load this against a video to check the sync. Kept on the host only; it is not posted to Discord. |
 | `transcript.json` | Every line with start and end in ms, speaker ID and name, plus the list of clips. |
+| `live.md` | The transcript so far, growing during the call (see [Live notes](#live-notes)). |
 | `events.jsonl` | Transcribed clips, appended as the call goes, so a crash still leaves a record. |
 | `chat.jsonl` | Text messages posted anywhere in the server during the recording, appended as they arrive. They are also interleaved into `transcript.md` (marked 💬) and listed under `chat` in `transcript.json`. |
 | `resume.json` | Only while the bot is down mid-recording: what it needs to carry on. It is removed when the session is picked up again. |
-| `session.json` | Metadata. `startedAtMs` is the sync anchor: every timestamp is an offset from it. |
+| `session.json` | Metadata. `startedAtMs` is the sync anchor: every timestamp is an offset from it. `live` says whether `live.md` is still growing. |
 | `tracks/<name>.ogg` | One track per speaker. Every track is exactly as long as the session and is silent while that person isn't talking. |
 | `tracks/mix.ogg` | All speakers mixed together. |
 | `clips/*.wav` | The raw clips, one per speaking turn. |
@@ -214,7 +224,8 @@ These are all environment variables. The defaults suit spacedock.
 | `WHISPER_LANGUAGE` | `en` | Language of the speech. Leave it empty to auto-detect per clip. |
 | `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE` | `cpu` / `int8` | The Polaris GPU has no CUDA, so transcription runs on the CPU. |
 | `SCRIBBYDASCRIBE_SILENCE_MS` | `800` | Silence that ends a speaker's clip. |
-| `SCRIBBYDASCRIBE_MAX_CLIP_MS` | `30000` | Long speeches are split at this length so they transcribe while the call is still going. |
+| `SCRIBBYDASCRIBE_MAX_CLIP_MS` | `10000` | Long speeches are split at this length so they transcribe, and reach the live notes, while the call is still going. |
+| `SCRIBBYDASCRIBE_LIVE_NOTES` | `true` | Keep `live.md`, the transcript so far, in each session folder as the call goes. |
 | `SCRIBBYDASCRIBE_MIN_CLIP_MS` | `400` | Clips shorter than this are kept as audio but not transcribed, because Whisper invents words on coughs and clicks. |
 | `SCRIBBYDASCRIBE_ALONE_TIMEOUT_MS` | `120000` | How long the bot stays alone in the channel before it stops. |
 | `SCRIBBYDASCRIBE_RESUME_AFTER_RESTART` | `true` | On a container stop, suspend recordings and carry on with them when the bot starts again, instead of finishing them. |
