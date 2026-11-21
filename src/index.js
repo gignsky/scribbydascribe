@@ -29,7 +29,18 @@ import { intentsFor, isDisallowedIntents, probeChatIntent } from './intents.js';
 import { RecordingSession, Suspended, findSuspended } from './session.js';
 import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
-import { HELP, describe, describeLast, finishedLine, joinNotice, joinedRecording } from './status.js';
+import {
+  HELP,
+  describe,
+  describeLast,
+  finishedLine,
+  inviteUrl,
+  joinNotice,
+  joinedRecording,
+  ownerAlert,
+  ownerOf,
+  shouldAlertOwner,
+} from './status.js';
 import { roll } from './dice.js';
 import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport, renderMarkdown } from './export.js';
 import { MAX_PARTY_MEMBERS, clearMembers, parseNames, setMembers } from './transpose.js';
@@ -319,11 +330,39 @@ async function onReady(c) {
     await c.application.commands.set(commands);
     console.log('[bot] commands registered globally');
   }
+  console.log(`[bot] invite link: ${inviteUrl(c.application.id)}`);
+  if (cfg.notifyOwner && !ownerId) {
+    try {
+      ownerId = cfg.ownerId ?? ownerOf(await c.application.fetch());
+      console.log(ownerId ? `[bot] new recordings will be reported to the owner (${ownerId})` : '[bot] could not tell who owns the bot; recordings will not be reported');
+    } catch (err) {
+      console.error('[bot] could not look up the bot owner:', err);
+    }
+  }
   // Once only: a voice-only reconnect fires ready again.
   resuming ??= resumeSuspended(c).catch((err) => console.error('[bot] resuming recordings failed:', err));
 }
 
 let resuming = null;
+/** The user told about recordings someone else starts (see SCRIBBYDASCRIBE_NOTIFY_OWNER). */
+let ownerId = null;
+
+// DM the owner that a recording started, unless they started it. A failed DM
+// (DMs closed, no shared server) is logged and never gets in the recording's way.
+function alertOwner(session, starter) {
+  if (!shouldAlertOwner({ notify: cfg.notifyOwner, ownerId, starterId: starter.id })) return;
+  const { guild } = session.voiceChannel;
+  const content = ownerAlert({
+    starter: `${starter.displayName ?? starter.username} (${starter.username})`,
+    guildName: guild.name,
+    channelName: session.voiceChannel.name,
+    channelUrl: `https://discord.com/channels/${guild.id}/${session.voiceChannel.id}`,
+    recordChat,
+  });
+  client.users
+    .send(ownerId, { content, allowedMentions: { parse: [] } })
+    .catch((err) => console.error('[bot] could not tell the owner about a new recording:', err.message));
+}
 
 /** Pick up every recording the last shutdown left suspended. */
 async function resumeSuspended(c) {
@@ -597,6 +636,7 @@ async function onInteraction(i) {
     return i.deferred ? i.editReply(msg) : i.followUp(msg);
   }
   sessions.set(i.guildId, session);
+  alertOwner(session, i.user);
 
   // Everyone in the call should know they are being recorded.
   const notice =

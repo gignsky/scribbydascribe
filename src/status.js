@@ -162,3 +162,32 @@ export function joinNotice({ mention, channelName, recordChat, paused }) {
     `If you'd rather not be recorded, leave the call or ask for \`/scribe stop\`.`
   );
 }
+
+/** Bot permissions the invite asks for: View Channels, Send Messages, Attach Files, Connect. */
+export const INVITE_PERMISSIONS = '1084416';
+
+/** The guild-install invite URL for an application. */
+export function inviteUrl(applicationId) {
+  return `https://discord.com/oauth2/authorize?client_id=${applicationId}&permissions=${INVITE_PERMISSIONS}&integration_type=0&scope=bot+applications.commands`;
+}
+
+/** Who owns the bot: the application's owner, or its team's owner. */
+export function ownerOf(application) {
+  const owner = application?.owner;
+  if (!owner) return null;
+  return owner.ownerId ?? owner.id ?? null;
+}
+
+/** The owner hears about every recording except the ones they start. */
+export function shouldAlertOwner({ notify, ownerId, starterId }) {
+  return Boolean(notify && ownerId && starterId !== ownerId);
+}
+
+/** The DM the owner gets when someone else starts a recording. */
+export function ownerAlert({ starter, guildName, channelName, channelUrl, recordChat }) {
+  return (
+    `🔴 **${starter}** started recording **${channelName}** in **${guildName}**` +
+    (recordChat ? ', with text chat' : '') +
+    `.\n${channelUrl}`
+  );
+}

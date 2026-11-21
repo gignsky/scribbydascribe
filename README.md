@@ -171,10 +171,12 @@ The rest of this README is for whoever hosts the bot.
    ```
    https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&permissions=1084416&integration_type=0&scope=bot+applications.commands
    ```
-   `1084416` is those four permissions together, so you can also type the URL by hand. Open it, pick the server, and authorize. You need Manage Server on that server. Use the same URL for every server you add the bot to.
+   `1084416` is those four permissions together, so you can also type the URL by hand. The bot also prints this link to its log when it starts (`[bot] invite link: …`). Open it, pick the server, and authorize. You need Manage Server on that server. Use the same URL for every server you add the bot to.
 
    Chat is only recorded from text channels where the bot has View Channels, so hide a channel from the bot's role to keep it out.
 4. Optional: to control who may record, use Server Settings → Integrations → scribbydascribe.
+5. For anyone but you to add the bot, **Public Bot** must be on under **Bot**. Turn it off to keep the invite link to yourself.
+6. You get a DM whenever someone else starts a recording, on any server (see `SCRIBBYDASCRIBE_NOTIFY_OWNER` below).
 
 **If a server has the bot but no commands:**
 - `DISCORD_GUILD_ID` may be set (see the deployment section below). It registers the commands in that one server only, so any other server gets none. Remove it to register them everywhere. Global commands can take up to an hour to appear.
@@ -216,6 +218,8 @@ These are all environment variables. The defaults suit spacedock.
 | `SCRIBBYDASCRIBE_RECORD_CHAT` | `true` | Also record text messages posted in the server while recording. Needs the Message Content intent. |
 | `SCRIBBYDASCRIBE_EXPORT_DIR` | `/data/exports` | Where an export too big to upload to Discord is saved. On spacedock that is `/var/lib/scribbydascribe/exports`. |
 | `SCRIBBYDASCRIBE_VOICE_SPLIT_THRESHOLD` | `0.75` | `/scribe transpose`'s voice-matching cosine similarity (0-1). Lower catches more of the same person's lines but blurs similar voices together; higher keeps voices apart but can splinter one person into several. |
+| `SCRIBBYDASCRIBE_NOTIFY_OWNER` | `true` | DM the bot's owner whenever someone else starts a recording, on any server: who started it, the server, the voice channel and a link to it. Recordings the owner starts are not reported. The owner must share a server with the bot and accept DMs from it. |
+| `SCRIBBYDASCRIBE_OWNER_ID` | the application's owner | The Discord user ID to DM instead of the application's owner (or, for an app owned by a team, the team's owner). |
 
 ## Development
 
