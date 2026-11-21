@@ -1,8 +1,71 @@
-# scribbydascribe
+# Scribby (scribbydascribe)
 
-A Discord bot that joins a voice call, records each speaker separately, and writes a timestamped transcript labelled by speaker. It runs on spacedock as a podman container.
+**A Discord bot that sits in your voice call and writes down who said what.** Start it with `/scribe start`, play your session or hold your meeting, and when you `/scribe stop` it posts a timestamped transcript, with every line labelled by the person who said it.
 
-Discord sends a bot each person's audio as a separate stream, so speakers never need to be guessed: every line is labelled with the Discord member who said it.
+It was built for a D&D game, so it also rolls dice, keeps the table's text chat next to the speech, and makes a best-effort split of several players sharing one mic.
+
+> **Status: early, invite-only.** Scribby runs on one machine its maintainer looks after, and is being tried on a handful of servers. Expect rough edges, and expect the transcript to arrive a while after a long call (see [How long a transcript takes](#how-long-a-transcript-takes)).
+
+## What you get
+
+When a recording stops, Scribby posts `transcript.md` and `transcript.srt` in the channel where it was started. An example (names and words made up):
+
+```markdown
+# The Gilded Table / Session Zero — 2026-11-14 23:00 UTC
+
+- Started: 2026-11-14T23:00:04.000Z
+- Duration: 02:41:17
+- Speakers: Rook, Mara, Teodor, Wren
+- Chat: 12 message(s) in 2 text channel(s), marked 💬
+- Timestamps are offsets from the start time above.
+
+---
+
+**[00:00:12] Rook:** Okay, everyone's here. Last time you'd just reached the gate of the drowned abbey.
+
+**[00:00:19] Mara:** And we still haven't paid the ferryman, right?
+
+**[00:00:23] Rook:** You have not paid the ferryman.
+
+💬 **[00:00:31] Wren in #table-talk:** brb, grabbing snacks
+
+**[00:00:35] Teodor:** I'll check the gate for traps while Wren's away.
+```
+
+Each person's line comes from their own audio stream, so speakers are never guessed. You can also export past sessions as JSONL, CSV or Markdown, and each recording keeps one audio track per speaker.
+
+## Getting Scribby on your server
+
+Scribby is invite-only for now. Message the maintainer on Discord, who will send you the invite link. Someone with **Manage Server** opens it and picks your server. That is the whole install: nothing to host and no token to set up.
+
+The link asks for only what the bot uses:
+
+| Permission | Why |
+|---|---|
+| View Channels, Send Messages, Attach Files | To announce recordings and post the transcript files |
+| Connect | To join the voice channel it records |
+| Slash commands (`applications.commands`) | So `/scribe` and `/roll` show up |
+
+Then:
+1. Run `/scribe help` to check the commands are there. New servers can take up to an hour to see them.
+2. Tell your members before the first recording, and pin a short note saying the server uses Scribby (see below).
+3. To limit who can record, use **Server Settings → Integrations → scribbydascribe** and restrict `/scribe`. By default anyone who can see the command can start a recording.
+4. To keep a text channel out of transcripts, hide it from the bot's role.
+
+## Privacy and consent
+
+Please read this before you record anyone.
+
+- **Everyone is told.** `/scribe start` announces the recording in the channel it was run in and in the voice channel's chat. Anyone who joins the call while it is recording is told too, by name. Pausing and resuming are announced the same way.
+- **What is kept:** the audio of each speaker, the transcript, and, while recording, messages posted in any text channel the bot can see (a channel hidden from the bot's role is never read, and the maintainer can turn chat recording off altogether). Nothing is captured while a recording is paused.
+- **Where it lives:** on the maintainer's own machine, not a cloud service. Speech is turned into text on that machine too (with Whisper), so audio is never sent to a transcription company.
+- **Who sees it:** the transcript is posted in your server. Exports only ever show your own server's sessions to people in your server.
+- **Opting out:** anyone who doesn't want to be recorded can leave the call or ask for `/scribe stop`. Ask everyone first: in some places (several US states, and much of Europe) recording a conversation needs everyone's consent, not just one person's.
+- **Deleting a recording:** recordings are kept until deleted. Ask the maintainer to delete a session and its audio.
+
+## How long a transcript takes
+
+Transcription runs on a CPU, in the order recordings come in, shared between every server using this copy of Scribby. It usually keeps up with one lively call as it goes, and falls behind when several servers record at once. After `/scribe stop`, a progress message shows the steps left and a rough time remaining, and the transcript posts when it is done. `/scribe status` shows the same at any time.
 
 ## Commands
 
@@ -90,7 +153,11 @@ JSONL has one JSON object per line. CSV has a header row and uses CRLF line endi
 
 Because every track starts at the same moment as the transcript, lining up video recorded later (see the roadmap) only needs one offset.
 
-## Setting up the Discord bot (one time)
+## Running Scribby yourself
+
+The rest of this README is for whoever hosts the bot.
+
+### Setting up the Discord bot (one time)
 
 1. Go to <https://discord.com/developers/applications>, choose **New Application**, open **Bot**, and choose **Reset Token**. Copy the token.
 2. On the same **Bot** page, under Privileged Gateway Intents, switch on **Message Content Intent**. This lets the bot record text chat alongside the call. It is the only privileged intent needed; without it, voice is still recorded.
@@ -113,7 +180,7 @@ Because every track starts at the same moment as the transcript, lining up video
 - `DISCORD_GUILD_ID` may be set (see the deployment section below). It registers the commands in that one server only, so any other server gets none. Remove it to register them everywhere. Global commands can take up to an hour to appear.
 - The bot may have been invited without the `applications.commands` scope. Kick it and invite it again with the URL above.
 
-## Deploying on spacedock
+### Deploying on spacedock
 
 1. Push to the `master` branch of `github:gignsky/scribbydascribe`. `master` is the release branch that spacedock deploys.
 2. Add the secret with `just sops`, as a key `scribbydascribe-env` whose value is an env file:
@@ -166,7 +233,7 @@ The round-trip test synthesises two voices with espeak-ng and encodes them to Op
 
 - **No video.** Discord's bot API cannot receive cameras or Go Live streams. The only tools that can are selfbots, which break Discord's terms of service.
 - **Encryption.** Discord has end-to-end encrypted all calls (DAVE) since 2026. Receiving audio needs `@discordjs/voice` ≥ 0.19.2 with `@snazzah/davey`, and both are pinned here. If Discord changes the protocol, update those two packages first.
-- **Consent.** Recording is announced when it starts. Tell anyone who joins later yourself.
+- **Consent.** Recording is announced when it starts, and to each person who joins while it runs. It cannot tell who has agreed: anyone who has not should leave the call. See [Privacy and consent](#privacy-and-consent).
 
 ## Roadmap
 

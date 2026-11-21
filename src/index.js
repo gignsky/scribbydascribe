@@ -29,7 +29,7 @@ import { intentsFor, isDisallowedIntents, probeChatIntent } from './intents.js';
 import { RecordingSession, Suspended, findSuspended } from './session.js';
 import { Transcriber } from './transcriber.js';
 import { clock } from './output.js';
-import { HELP, describe, describeLast, finishedLine } from './status.js';
+import { HELP, describe, describeLast, finishedLine, joinNotice, joinedRecording } from './status.js';
 import { roll } from './dice.js';
 import { FORMATS, MAX_CHOICES, choiceFor, exportRows, listSessions, renderExport, renderMarkdown } from './export.js';
 import { MAX_PARTY_MEMBERS, clearMembers, parseNames, setMembers } from './transpose.js';
@@ -612,11 +612,33 @@ async function onInteraction(i) {
   }
 }
 
+/** RecordingSession -> ids of people already told it is recording */
+const greeted = new WeakMap();
+
+// Tell anyone who joins mid-recording that they are being recorded, once per
+// person per session, in the voice channel's own chat where it has one.
+function greetJoiner(session, oldState, newState) {
+  if (session.stopping || !joinedRecording(oldState, newState, session.voiceChannel.id)) return;
+  const seen = greeted.get(session) ?? new Set();
+  greeted.set(session, seen);
+  if (seen.has(newState.id)) return;
+  seen.add(newState.id);
+  const notice = joinNotice({
+    mention: `<@${newState.id}>`,
+    channelName: session.voiceChannel.name,
+    recordChat,
+    paused: Boolean(session.pausedAt),
+  });
+  const where = session.voiceChannel.isTextBased() ? session.voiceChannel : session.textChannel;
+  where?.send({ content: notice, allowedMentions: { users: [newState.id] } }).catch(() => {});
+}
+
 // Leave on our own once everyone else has gone.
 function onVoiceStateUpdate(oldState, newState) {
   for (const guildId of new Set([oldState.guild.id, newState.guild.id])) {
     const session = sessions.get(guildId);
     if (!session) continue;
+    greetJoiner(session, oldState, newState);
     const humans = session.voiceChannel.members.filter((m) => !m.user.bot).size;
     const timer = aloneTimers.get(guildId);
     if (humans === 0 && !timer) {

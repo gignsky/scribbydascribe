@@ -137,3 +137,28 @@ export function describeLast(last) {
     (last.posted ? `; its transcript was posted${last.postedIn ? ` in ${last.postedIn}` : ''}.` : ', but its transcript could not be posted. It is saved on the host.')
   );
 }
+
+/**
+ * Did this voice-state change bring a person (not a bot) into the recorded
+ * channel? Moving between other channels, muting or unmuting, and rejoining
+ * the same channel without leaving it are not joins.
+ */
+export function joinedRecording(oldState, newState, channelId) {
+  if (newState.channelId !== channelId || oldState.channelId === channelId) return false;
+  return !(newState.member?.user?.bot ?? true);
+}
+
+/**
+ * The notice for someone who joins a call that is already being recorded,
+ * so they hear it from the bot rather than relying on whoever started it.
+ */
+export function joinNotice({ mention, channelName, recordChat, paused }) {
+  const what = recordChat
+    ? 'what is said here, and messages posted in this server\'s text channels, are being saved'
+    : 'what is said here is being saved';
+  const state = paused ? ' (paused right now, so nothing is being captured until someone runs `/scribe resume`)' : '';
+  return (
+    `🔴 ${mention}, **${channelName} is being recorded and transcribed**${state}: ${what}. ` +
+    `If you'd rather not be recorded, leave the call or ask for \`/scribe stop\`.`
+  );
+}
